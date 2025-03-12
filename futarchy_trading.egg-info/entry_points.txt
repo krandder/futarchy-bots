@@ -1,0 +1,3 @@
+[console_scripts]
+futarchy-bot = futarchy_trading.main:main
+

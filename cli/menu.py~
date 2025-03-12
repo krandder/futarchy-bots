@@ -1,0 +1,227 @@
+from ..core.futarchy_bot import FutarchyBot
+from ..strategies.monitoring import simple_monitoring_strategy
+from ..strategies.probability import probability_threshold_strategy
+from ..strategies.arbitrage import arbitrage_strategy
+
+class FutarchyMenu:
+    """Interactive CLI menu for the Futarchy Trading Bot"""
+    
+    def __init__(self):
+        """Initialize the menu and bot instance"""
+        print("\n" + "="*50)
+        print("🤖 Gnosis Futarchy Trading Bot")
+        print("="*50)
+        
+        # Initialize bot
+        self.bot = FutarchyBot()
+        
+        # Get and print balances
+        balances = self.bot.get_balances()
+        self.bot.print_balances(balances)
+        
+        # Get and print market prices
+        prices = self.bot.get_market_prices()
+        if prices:
+            self.bot.print_market_prices(prices)
+    
+    def display_menu(self):
+        """Display the main menu options"""
+        print("\n" + "="*50)
+        print("📋 Command Menu:")
+        print("1. Refresh Balances")
+        print("2. Refresh Market Prices")
+        print("3. Convert XDAI to WXDAI")
+        print("4. Convert WXDAI to SDAI")
+        print("5. Add Collateral (GNO)")
+        print("6. Remove Collateral (GNO)")
+        print("7. Execute Swap")
+        print("8. Add sDAI Collateral (Split into YES/NO tokens)")
+        print("9. Wrap GNO to waGNO (Aave)")
+        print("10. Unwrap waGNO to GNO")
+        print("11. Swap sDAI for waGNO (Balancer)")
+        print("12. Swap waGNO for sDAI (Balancer)")
+        print("0. Exit")
+    
+
+    def handle_choice(self, choice):
+        """
+        Handle user's menu choice.
+        
+        Args:
+            choice: User's menu selection
+            
+        Returns:
+            bool: True to continue, False to exit
+        """
+        try:
+            if choice == "0":
+                print("Exiting...")
+                return False
+                
+            elif choice == "1":
+                balances = self.bot.get_balances()
+                self.bot.print_balances(balances)
+                
+                # Also print Aave/Balancer token balances
+                self.bot.aave_balancer.print_balances()
+                
+            elif choice == "2":
+                prices = self.bot.get_market_prices()
+                if prices:
+                    self.bot.print_market_prices(prices)
+                    
+            elif choice == "3":
+                # XDAI to WXDAI conversion
+                amount = float(input("Enter amount of XDAI to convert to WXDAI: "))
+                self.bot.convert_xdai_to_wxdai(amount)
+                # Refresh balances after conversion
+                balances = self.bot.get_balances()
+                self.bot.print_balances(balances)
+                
+            elif choice == "4":
+                # WXDAI to SDAI conversion
+                amount = float(input("Enter amount of WXDAI to convert to SDAI: "))
+                self.bot.convert_wxdai_to_sdai(amount)
+                # Refresh balances after conversion
+                balances = self.bot.get_balances()
+                self.bot.print_balances(balances)
+                
+            elif choice == "5":
+                amount = float(input("Enter amount of GNO to add as collateral: "))
+                self.bot.add_collateral("company", amount)
+                # Refresh balances after adding collateral
+                balances = self.bot.get_balances()
+                self.bot.print_balances(balances)
+                
+            elif choice == "6":
+                amount = float(input("Enter amount of GNO to remove from collateral: "))
+                self.bot.remove_collateral("company", amount)
+                # Refresh balances after removing collateral
+                balances = self.bot.get_balances()
+                self.bot.print_balances(balances)
+                
+            elif choice == "7":
+                # Swap Options:
+                print("\nSwap Options:")
+                print("1. Buy YES GNO tokens using YES sDAI")
+                print("2. Sell YES GNO tokens for YES sDAI")
+                print("3. Buy NO GNO tokens using NO sDAI")
+                print("4. Sell NO GNO tokens for NO sDAI")
+                swap_choice = input("\nEnter swap type (1-4): ")
+                amount = float(input("Enter amount to swap: "))
+                
+                is_buy = swap_choice in ["1", "3"]
+                is_yes = swap_choice in ["1", "2"]
+                
+                self.bot.execute_swap("company", is_buy, amount, is_yes)
+                
+                # Refresh balances after swap
+                balances = self.bot.get_balances()
+                self.bot.print_balances(balances)
+                
+            elif choice == "8":
+                amount = float(input("Enter amount of sDAI to split into YES/NO tokens: "))
+                self.bot.add_sdai_collateral(amount)
+                # Refresh balances after adding collateral
+                balances = self.bot.get_balances()
+                self.bot.print_balances(balances)
+                
+            elif choice == "9":
+                # Wrap GNO to waGNO
+                amount = float(input("Enter amount of GNO to wrap: "))
+                self.bot.aave_balancer.wrap_gno_to_wagno(amount)
+                # Refresh balances
+                self.bot.aave_balancer.print_balances()
+                
+            elif choice == "10":
+                # Unwrap waGNO to GNO
+                amount = float(input("Enter amount of waGNO to unwrap: "))
+                self.bot.aave_balancer.unwrap_wagno_to_gno(amount)
+                # Refresh balances
+                self.bot.aave_balancer.print_balances()
+                
+            elif choice == "11":
+                # Swap sDAI for waGNO on Balancer
+                amount = float(input("Enter amount of sDAI to swap: "))
+                min_amount = input("Enter minimum waGNO to receive (optional, leave blank for auto-calculation): ")
+                min_amount_out = float(min_amount) if min_amount else None
+                
+                self.bot.aave_balancer.swap_sdai_to_wagno(amount, min_amount_out)
+                # Refresh balances
+                self.bot.aave_balancer.print_balances()
+                
+            elif choice == "12":
+                # Swap waGNO for sDAI on Balancer
+                amount = float(input("Enter amount of waGNO to swap: "))
+                min_amount = input("Enter minimum sDAI to receive (optional, leave blank for auto-calculation): ")
+                min_amount_out = float(min_amount) if min_amount else None
+                
+                self.bot.aave_balancer.swap_wagno_to_sdai(amount, min_amount_out)
+                # Refresh balances
+                self.bot.aave_balancer.print_balances()
+                
+            else:
+                print("Invalid choice, please try again.")
+                
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error handling menu choice: {e}")
+            import traceback
+            traceback.print_exc()
+            print("\nPress Enter to continue...")
+            input()  # Wait for user input before continuing
+            return True  # Continue loop even after error
+
+
+    def test_cowswap_api(self):
+        """Test the CoW Swap API directly"""
+        from ..config.constants import COWSWAP_API_URL
+        import requests
+        import json
+        
+        print("\n--- Testing CoW Swap API ---")
+        
+        # Test a simple API endpoint (price determination)
+        test_url = f"{COWSWAP_API_URL}/api/v1/quote"
+        
+        # GNO and sDAI addresses
+        sell_token = "0xaf204776c7245bF4147c2612BF6e5972Ee483701"  # sDAI
+        buy_token = "0x9C58BAcC331c9aa871AFD802DB6379a98e80CEdb"   # GNO
+        
+        test_data = {
+            "sellToken": sell_token,
+            "buyToken": buy_token,
+            "sellAmountBeforeFee": str(1000000000000000000),  # 1 token in wei
+            "from": self.bot.address,
+            "kind": "sell"
+        }
+        
+        print(f"API URL: {test_url}")
+        print(f"Test data: {json.dumps(test_data, indent=2)}")
+        
+        try:
+            response = requests.post(test_url, json=test_data)
+            print(f"Response status: {response.status_code}")
+            print(f"Response headers: {dict(response.headers)}")
+            print(f"Response text: {response.text}")
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                print(f"Parsed response: {json.dumps(response_data, indent=2)}")
+        except Exception as e:
+            print(f"Error testing API: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        print("\nPress Enter to continue...")
+        input()
+    
+    def run(self):
+        """Run the main menu loop"""
+        while True:
+            self.display_menu()
+            choice = input("\nEnter your choice: ")
+            
+            if not self.handle_choice(choice):
+                break
