@@ -1,6 +1,0 @@
-cli
-config
-core
-exchanges
-strategies
-utils
