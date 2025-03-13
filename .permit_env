@@ -1,0 +1,21 @@
+# Gnosis Chain Configuration
+export GNOSIS_RPC_URL="https://rpc.gnosischain.com" # Replace with your preferred Gnosis RPC URL
+export CHAIN_ID=100
+
+# User Credentials
+export USER_ADDRESS="0xf9fD99A5a0b887bcfEA723e69e63E229E3e9b006" # Add your wallet address here
+
+# Contract Addresses
+export BATCH_ROUTER_ADDRESS="0xe2fa4e1d17725e72dcdAfe943Ecf45dF4B9E285b" # Add the batch router contract address here
+export PERMIT2_ADDRESS="0x000000000022d473030f116ddee9f6b43ac78ba3"
+
+# Permit2 Transaction Parameters (extracted from provided transaction data)
+export TOKEN_ADDRESS="0xaf204776c7245bF4147c2612BF6e5972Ee483701"
+export AMOUNT="730750818665451459101842416358141509827966271487"
+export EXPIRATION="1741878630"
+export NONCE="1"
+export VAULT_ADDRESS="0xe2fa4e1d17725e72dcdAfe943Ecf45dF4B9E285b"
+export SIG_DEADLINE="115792089237316195423570985008687907853269984665640564039457584007913129639935"
+
+# The permit2Signature is provided in the script for reference but not needed as an env var
+# permit2Signature: 0x37cc712d347eef60e90d62e757b6985f0005144326639332a6e0d7ab163dc22b4673bc1d21a947265f7002ebcc4f165b2bbc24b6b31365e58b42905d733e4ba51c 
