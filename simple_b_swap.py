@@ -4,15 +4,27 @@ from web3 import Web3
 from pathlib import Path
 
 # --- Configuration ---
-# Gnosis Chain public RPC endpoint
-RPC_URL = "https://rpc.gnosischain.com"
-# Router contract address (replace with the actual address)
-ROUTER_ADDRESS = Web3.to_checksum_address("0xe2fa4e1d17725e72dcdAfe943Ecf45dF4B9E285b")  # Balancer Router on Gnosis Chain
-# Your private key (store securely, never commit your real key)
-PRIVATE_KEY = os.environ.get("PRIVATE_KEY", "YOUR_PRIVATE_KEY")  # Better to use environment variable
+# Load configuration from environment variables with defaults
+RPC_URL = os.environ.get('GNOSIS_RPC_URL', 'https://gnosis-mainnet.public.blastapi.io')
+ROUTER_ADDRESS = Web3.to_checksum_address(os.environ.get('BATCH_ROUTER_ADDRESS', '0xe2fa4e1d17725e72dcdAfe943Ecf45dF4B9E285b'))
+PRIVATE_KEY = os.environ.get('PRIVATE_KEY')
+
+# Token addresses - configurable via environment variables
+TOKEN_IN_ADDRESS = os.environ.get('TOKEN_IN_ADDRESS', '0xaf204776c7245bf4147c2612bf6e5972ee483701')  # Default to sDAI
+TOKEN_OUT_ADDRESS = os.environ.get('TOKEN_OUT_ADDRESS', '0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644')  # Default to waGNO
+POOL_ADDRESS = os.environ.get('POOL_ADDRESS', '0xd1d7fa8871d84d0e77020fc28b7cd5718c446522')  # Default to sDAI-waGNO pool
+
+# Token names for display
+TOKEN_IN_NAME = os.environ.get('TOKEN_IN_NAME', 'sDAI')
+TOKEN_OUT_NAME = os.environ.get('TOKEN_OUT_NAME', 'waGNO')
+
+# Amount to swap - configurable via environment variable
+# Default is 0.0001 tokens with 18 decimals
+DEFAULT_AMOUNT = 100000000000000  # 0.0001 tokens with 18 decimals
+AMOUNT_TO_SWAP = int(os.environ.get('AMOUNT_TO_SWAP', DEFAULT_AMOUNT))
 
 # Chain ID for Gnosis Chain is 100
-CHAIN_ID = 100
+CHAIN_ID = int(os.environ.get('CHAIN_ID', '100'))
 
 # --- Load ABI from file ---
 def load_abi():
@@ -43,7 +55,7 @@ def main():
         return
 
     # Set up our account (address derived from the private key)
-    if PRIVATE_KEY == "YOUR_PRIVATE_KEY":
+    if not PRIVATE_KEY:
         print("Error: Private key not set. Please set the PRIVATE_KEY environment variable.")
         return
         
@@ -54,28 +66,60 @@ def main():
     # --- Instantiate the Router Contract ---
     router = w3.eth.contract(address=ROUTER_ADDRESS, abi=abi)
 
+    # --- Convert addresses to checksum format ---
+    token_in = Web3.to_checksum_address(TOKEN_IN_ADDRESS)
+    token_out = Web3.to_checksum_address(TOKEN_OUT_ADDRESS)
+    pool = Web3.to_checksum_address(POOL_ADDRESS)
+
+    print(f"\nSwap Configuration:")
+    print(f"Token In: {TOKEN_IN_NAME} ({token_in})")
+    print(f"Token Out: {TOKEN_OUT_NAME} ({token_out})")
+    print(f"Pool: {pool}")
+    print(f"Amount to swap: {AMOUNT_TO_SWAP} ({w3.from_wei(AMOUNT_TO_SWAP, 'ether')} {TOKEN_IN_NAME})")
+    
     # --- Define Swap Parameters ---
-    # We need to prepare the parameters for swapExactIn:
+    # Simplified: Only one step from token_in to token_out
     paths = [
         {
-            "tokenIn": Web3.to_checksum_address("0xaf204776c7245bf4147c2612bf6e5972ee483701"),  # Input token
+            "tokenIn": token_in,
             "steps": [
                 {
-                    "pool": Web3.to_checksum_address("0xd1d7fa8871d84d0e77020fc28b7cd5718c446522"),  # First pool
-                    "tokenOut": Web3.to_checksum_address("0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644"),  # Intermediate token
+                    "pool": pool,
+                    "tokenOut": token_out,
                     "isBuffer": False
-                },
-                {
-                    "pool": Web3.to_checksum_address("0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644"),  # Second pool
-                    "tokenOut": Web3.to_checksum_address("0x9c58bacc331c9aa871afd802db6379a98e80cedb"),  # Final token
-                    "isBuffer": True
                 }
             ],
-            "exactAmountIn": int("10000000000000000"),  # 0.01 tokens (depending on decimals)
-            "minAmountOut": int("92622554828851")  # Minimum amount to receive
+            "exactAmountIn": AMOUNT_TO_SWAP,
+            "minAmountOut": 0  # Set very low for testing purposes
         }
     ]
-    deadline = 9007199254740991  # a far future deadline
+    
+    # First query to see expected output
+    print("\nQuerying expected swap output...")
+    try:
+        expected_output = router.functions.querySwapExactIn(
+            paths,
+            sender_address,
+            '0x'  # empty user data
+        ).call()
+        
+        print(f"Expected output: {expected_output}")
+        if expected_output and expected_output[0]:
+            expected_amount = expected_output[0][0]
+            print(f"Expected {TOKEN_OUT_NAME} output: {w3.from_wei(expected_amount, 'ether')} {TOKEN_OUT_NAME}")
+            
+            # Set minAmountOut to 80% of expected output
+            min_amount_out = int(expected_amount * 0.8)
+            paths[0]["minAmountOut"] = min_amount_out
+            print(f"Setting minAmountOut to 80% of expected: {w3.from_wei(min_amount_out, 'ether')} {TOKEN_OUT_NAME}")
+        else:
+            print("Warning: Could not determine expected output. Proceeding with zero minAmountOut.")
+    except Exception as e:
+        print(f"Error during query: {e}")
+        # Still proceed with the swap, but with zero minAmountOut
+        print("Proceeding with zero minAmountOut")
+    
+    deadline = w3.eth.get_block('latest')['timestamp'] + (60 * 60)  # 1 hour from now
     wethIsEth = False  # Not using ETH directly
     userData = b""  # no additional data
 
@@ -84,7 +128,7 @@ def main():
         # Get current gas price with a small buffer for faster inclusion
         gas_price = int(w3.eth.gas_price * 1.1)
         
-        # The swapExactIn function is payable; in our case we don't need to send ETH
+        print("\nBuilding transaction...")
         tx = router.functions.swapExactIn(
             paths, 
             deadline, 
@@ -94,7 +138,7 @@ def main():
             "chainId": CHAIN_ID,
             "from": sender_address,
             "nonce": w3.eth.get_transaction_count(sender_address),
-            "gas": 800000,  # Higher gas limit for complex swaps
+            "gas": 1000000,  # Higher gas limit
             "gasPrice": gas_price,
             "value": 0  # no ETH sent since wethIsEth is false
         })
@@ -105,10 +149,10 @@ def main():
         signed_tx = w3.eth.account.sign_transaction(tx, private_key=PRIVATE_KEY)
 
         # --- Send the Transaction ---
-        # Use raw_transaction attribute (updated naming in web3.py v6+)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        print("Transaction sent. Tx hash:", tx_hash.hex())
-        print(f"View on block explorer: https://gnosisscan.io/tx/{tx_hash.hex()}")
+        tx_hash_hex = tx_hash.hex()
+        print("Transaction sent. Tx hash:", tx_hash_hex)
+        print(f"View on block explorer: https://gnosisscan.io/tx/{tx_hash_hex}")
 
         # --- Wait for Receipt ---
         print("Waiting for transaction confirmation...")
@@ -116,7 +160,7 @@ def main():
         
         # Check if transaction was successful
         if receipt.status == 1:
-            print("Swap executed successfully!")
+            print("✅ Swap executed successfully!")
             
             # Calculate gas used in USD (approximate)
             gas_used = receipt.gasUsed
@@ -126,7 +170,9 @@ def main():
             print(f"Gas price: {gas_price_gwei} Gwei")
             print(f"Gas cost: {gas_cost_eth:.6f} xDAI")
         else:
-            print("Swap failed! Check transaction details on block explorer.")
+            print("❌ Swap failed! Check transaction details on block explorer.")
+            print(f"Transaction hash: {tx_hash_hex}")
+            print(f"Gas used: {receipt.gasUsed}")
             
     except Exception as e:
         print(f"Error during transaction: {e}")
