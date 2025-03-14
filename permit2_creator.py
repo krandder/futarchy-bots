@@ -1,18 +1,26 @@
 from web3 import Web3
 import json
 import os
+import sys
 from eth_account.messages import encode_typed_data
 from hexbytes import HexBytes
 
+# Add the project root to the path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from config.constants import (
+    CONTRACT_ADDRESSES, TOKEN_CONFIG, DEFAULT_PERMIT_CONFIG
+)
+
 # Setup - more configurable version
-RPC_URL = os.environ.get('GNOSIS_RPC_URL', 'https://gnosis-mainnet.public.blastapi.io')
+RPC_URL = os.environ.get('RPC_URL', 'https://gnosis-mainnet.public.blastapi.io')
 CHAIN_ID = int(os.environ.get('CHAIN_ID', '100'))  # Default to Gnosis Chain
 private_key = os.environ.get('PRIVATE_KEY')
 
-# Token and contract addresses
-TOKEN_ADDRESS = os.environ.get('TOKEN_ADDRESS', '0xaf204776c7245bf4147c2612bf6e5972ee483701')  # Default to sDAI
-PERMIT2_ADDRESS = os.environ.get('PERMIT2_ADDRESS', '0x000000000022D473030F116dDEE9F6B43aC78BA3')
-SPENDER_ADDRESS = os.environ.get('SPENDER_ADDRESS', '0xe2fa4e1d17725e72dcdAfe943Ecf45dF4B9E285b')  # Default to BatchRouter
+# Token and contract addresses from constants
+TOKEN_ADDRESS = os.environ.get('TOKEN_ADDRESS', TOKEN_CONFIG["currency"]["address"])  # Default to sDAI
+PERMIT2_ADDRESS = os.environ.get('PERMIT2_ADDRESS', CONTRACT_ADDRESSES["permit2"])
+SPENDER_ADDRESS = os.environ.get('SPENDER_ADDRESS', CONTRACT_ADDRESSES["batchRouter"])  # Default to BatchRouter
 
 # Connect to blockchain
 w3 = Web3(Web3.HTTPProvider(RPC_URL))

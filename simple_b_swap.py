@@ -1,27 +1,34 @@
 import json
 import os
+import sys
 from web3 import Web3
 from pathlib import Path
 
+# Add the project root to the path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from config.constants import (
+    CONTRACT_ADDRESSES, TOKEN_CONFIG, BALANCER_CONFIG, DEFAULT_SWAP_CONFIG
+)
+
 # --- Configuration ---
 # Load configuration from environment variables with defaults
-RPC_URL = os.environ.get('GNOSIS_RPC_URL', 'https://gnosis-mainnet.public.blastapi.io')
-ROUTER_ADDRESS = Web3.to_checksum_address(os.environ.get('BATCH_ROUTER_ADDRESS', '0xe2fa4e1d17725e72dcdAfe943Ecf45dF4B9E285b'))
+RPC_URL = os.environ.get('RPC_URL', 'https://gnosis-mainnet.public.blastapi.io')
+ROUTER_ADDRESS = Web3.to_checksum_address(os.environ.get('BATCH_ROUTER_ADDRESS', CONTRACT_ADDRESSES["batchRouter"]))
 PRIVATE_KEY = os.environ.get('PRIVATE_KEY')
 
-# Token addresses - configurable via environment variables
-TOKEN_IN_ADDRESS = os.environ.get('TOKEN_IN_ADDRESS', '0xaf204776c7245bf4147c2612bf6e5972ee483701')  # Default to sDAI
-TOKEN_OUT_ADDRESS = os.environ.get('TOKEN_OUT_ADDRESS', '0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644')  # Default to waGNO
-POOL_ADDRESS = os.environ.get('POOL_ADDRESS', '0xd1d7fa8871d84d0e77020fc28b7cd5718c446522')  # Default to sDAI-waGNO pool
+# Token addresses from constants
+TOKEN_IN_ADDRESS = os.environ.get('TOKEN_IN_ADDRESS', TOKEN_CONFIG["currency"]["address"])  # Default to sDAI
+TOKEN_OUT_ADDRESS = os.environ.get('TOKEN_OUT_ADDRESS', TOKEN_CONFIG["wagno"]["address"])  # Default to waGNO
+POOL_ADDRESS = os.environ.get('POOL_ADDRESS', BALANCER_CONFIG["pool_address"])  # Default to sDAI-waGNO pool
 
 # Token names for display
-TOKEN_IN_NAME = os.environ.get('TOKEN_IN_NAME', 'sDAI')
-TOKEN_OUT_NAME = os.environ.get('TOKEN_OUT_NAME', 'waGNO')
+TOKEN_IN_NAME = os.environ.get('TOKEN_IN_NAME', TOKEN_CONFIG["currency"]["name"])
+TOKEN_OUT_NAME = os.environ.get('TOKEN_OUT_NAME', TOKEN_CONFIG["wagno"]["name"])
 
 # Amount to swap - configurable via environment variable
 # Default is 0.0001 tokens with 18 decimals
-DEFAULT_AMOUNT = 100000000000000  # 0.0001 tokens with 18 decimals
-AMOUNT_TO_SWAP = int(os.environ.get('AMOUNT_TO_SWAP', DEFAULT_AMOUNT))
+AMOUNT_TO_SWAP = int(os.environ.get('AMOUNT_TO_SWAP', DEFAULT_SWAP_CONFIG["amount_to_swap"]))
 
 # Chain ID for Gnosis Chain is 100
 CHAIN_ID = int(os.environ.get('CHAIN_ID', '100'))

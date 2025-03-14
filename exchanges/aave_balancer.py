@@ -1,18 +1,23 @@
 """Aave and Balancer utilities for the Futarchy Trading Bot"""
 
-from ..config.constants import (
-    BALANCER_VAULT_ADDRESS, BALANCER_POOL_ADDRESS, WAGNO_ADDRESS,
-    BALANCER_VAULT_ABI, BALANCER_POOL_ABI, WAGNO_ABI,
-    TOKEN_CONFIG
+import sys
+import os
+
+# Add the project root to the path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config.constants import (
+    CONTRACT_ADDRESSES, TOKEN_CONFIG, BALANCER_CONFIG,
+    BALANCER_VAULT_ABI, BALANCER_POOL_ABI, WAGNO_ABI
 )
-from ..utils.web3_utils import get_raw_transaction
+from utils.web3_utils import get_raw_transaction
 
 class AaveBalancerHandler:
     """Handler for Aave and Balancer interactions"""
     
     def __init__(self, bot):
         """
-        Initialize the Aave and Balancer handler.
+        Initialize the Aave/Balancer handler.
         
         Args:
             bot: FutarchyBot instance with web3 connection and account
@@ -22,12 +27,13 @@ class AaveBalancerHandler:
         self.account = bot.account
         self.address = bot.address
         
+        # Initialize Balancer contracts
+        self.balancer_vault_address = self.w3.to_checksum_address(BALANCER_CONFIG["vault_address"])
+        self.balancer_pool_address = self.w3.to_checksum_address(BALANCER_CONFIG["pool_address"])
+        self.wagno_address = self.w3.to_checksum_address(TOKEN_CONFIG["wagno"]["address"])
+        
         # Token addresses from config - ensure they're checksummed
-        self.gno_address = self.w3.to_checksum_address(TOKEN_CONFIG["company"]["address"])
         self.sdai_address = self.w3.to_checksum_address(TOKEN_CONFIG["currency"]["address"])
-        self.wagno_address = self.w3.to_checksum_address(WAGNO_ADDRESS)
-        self.balancer_pool_address = self.w3.to_checksum_address(BALANCER_POOL_ADDRESS)
-        self.balancer_vault_address = self.w3.to_checksum_address(BALANCER_VAULT_ADDRESS)
         
         # Initialize with a fallback pool ID
         self.pool_id = "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -39,7 +45,6 @@ class AaveBalancerHandler:
     def init_contracts(self):
         """Initialize contract instances"""
         # ERC20 contracts
-        self.gno_token = self.bot.get_token_contract(self.gno_address)
         self.sdai_token = self.bot.get_token_contract(self.sdai_address)
         
         # Aave waGNO contract (StaticAToken)
@@ -87,7 +92,7 @@ class AaveBalancerHandler:
             amount_wei = self.w3.to_wei(amount, 'ether')
             
             # Check GNO balance
-            gno_balance = self.gno_token.functions.balanceOf(self.address).call()
+            gno_balance = self.sdai_token.functions.balanceOf(self.address).call()
             if gno_balance < amount_wei:
                 print(f"❌ Insufficient GNO balance. Required: {amount}, Available: {self.w3.from_wei(gno_balance, 'ether')}")
                 return None
@@ -96,12 +101,12 @@ class AaveBalancerHandler:
             
             # 1. Approve waGNO contract to spend GNO
             checksummed_wagno_address = self.w3.to_checksum_address(self.wagno_address)
-            if not self.bot.approve_token(self.gno_token, checksummed_wagno_address, amount_wei):
+            if not self.bot.approve_token(self.sdai_token, checksummed_wagno_address, amount_wei):
                 print("❌ Failed to approve GNO transfer")
                 return None
             
             # Debug: Get the current allowance
-            current_allowance = self.gno_token.functions.allowance(self.address, checksummed_wagno_address).call()
+            current_allowance = self.sdai_token.functions.allowance(self.address, checksummed_wagno_address).call()
             print(f"DEBUG: Current allowance for waGNO contract: {self.w3.from_wei(current_allowance, 'ether')} GNO")
             
             # Debug: Check if waGNO contract exists
@@ -409,12 +414,10 @@ class AaveBalancerHandler:
         """
         try:
             # Get token balances
-            gno_balance = self.gno_token.functions.balanceOf(self.address).call()
             sdai_balance = self.sdai_token.functions.balanceOf(self.address).call()
             wagno_balance = self.wagno_token.functions.balanceOf(self.address).call()
             
             balances = {
-                "GNO": self.w3.from_wei(gno_balance, 'ether'),
                 "sDAI": self.w3.from_wei(sdai_balance, 'ether'),
                 "waGNO": self.w3.from_wei(wagno_balance, 'ether')
             }
@@ -423,7 +426,6 @@ class AaveBalancerHandler:
         except Exception as e:
             print(f"❌ Error getting token balances: {e}")
             return {
-                "GNO": 0,
                 "sDAI": 0,
                 "waGNO": 0
             }
@@ -433,7 +435,6 @@ class AaveBalancerHandler:
         balances = self.get_balances()
         
         print("\n=== Aave/Balancer Token Balances ===")
-        print(f"GNO:   {balances['GNO']:.6f}")
         print(f"sDAI:  {balances['sDAI']:.6f}")
         print(f"waGNO: {balances['waGNO']:.6f}")
 

@@ -1,22 +1,27 @@
 import time
+import sys
+import os
+
+# Add the project root to the path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from web3 import Web3
-from ..config.constants import (
+from config.constants import (
     CONTRACT_ADDRESSES, TOKEN_CONFIG, POOL_CONFIG_YES, POOL_CONFIG_NO,
     UNISWAP_V3_POOL_ABI, SUSHISWAP_V3_ROUTER_ABI, FUTARCHY_ROUTER_ABI,
     SDAI_RATE_PROVIDER_ABI, WXDAI_ABI, SDAI_DEPOSIT_ABI, MIN_SQRT_RATIO, MAX_SQRT_RATIO,
     COWSWAP_API_URL
 )
-from ..utils.web3_utils import get_raw_transaction
-from ..exchanges.cowswap import CowSwapExchange
-from .base_bot import BaseBot
-from ..exchanges.aave_balancer import AaveBalancerHandler
+from utils.web3_utils import get_raw_transaction
+from exchanges.cowswap import CowSwapExchange
+from core.base_bot import BaseBot
+from exchanges.aave_balancer import AaveBalancerHandler
 
 class FutarchyBot(BaseBot):
     """Main Futarchy Trading Bot implementation"""
     
     # In futarchy_bot.py, add to the __init__ method:
-    def __init__(self, rpc_url=None):
+    def __init__(self, rpc_url=None, verbose=False):
         """Initialize the Futarchy Bot"""
         super().__init__(rpc_url)
         
@@ -750,9 +755,6 @@ class FutarchyBot(BaseBot):
         # This is essentially the same as add_collateral but specifically for sDAI
         return self.add_collateral("currency", amount)
     
-
-
-
     def swap_sdai_to_gno_via_cowswap(self, amount, min_buy_amount=None):
         """
         Swap sDAI for GNO using CoW Swap.
@@ -983,7 +985,6 @@ class FutarchyBot(BaseBot):
         except Exception as e:
             print(f"❌ Error executing strategy: {e}")
             return None
-
 
     def test_cowswap_signing(self):
         """Test CowSwap signing capabilities and available libraries"""

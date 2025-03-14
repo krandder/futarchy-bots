@@ -1,7 +1,13 @@
+import sys
+import os
+
+# Add the project root to the path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from web3 import Web3
 from web3.exceptions import ContractLogicError
-from ..utils.web3_utils import setup_web3_connection, get_account_from_private_key, get_raw_transaction
-from ..config.constants import CONTRACT_ADDRESSES, ERC20_ABI
+from utils.web3_utils import setup_web3_connection, get_account_from_private_key, get_raw_transaction
+from config.constants import CONTRACT_ADDRESSES, ERC20_ABI
 
 class BaseBot:
     """Base bot with common functionality for blockchain interactions"""

@@ -1,9 +1,13 @@
 import json
 import os
 import time
+import traceback
 from web3 import Web3
 from eth_account import Account
+from eth_account.signers.local import LocalAccount
+from eth_account.messages import encode_typed_data
 from dotenv import load_dotenv
+from eth_utils import to_hex, encode_hex
 
 # Load environment variables
 load_dotenv()
@@ -11,6 +15,13 @@ load_dotenv()
 # Connect to Gnosis Chain
 rpc_url = os.getenv('GNOSIS_RPC_URL')
 w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+# Enable debug mode
+DEBUG = True
+
+def debug_print(msg):
+    if DEBUG:
+        print(f"[DEBUG] {msg}")
 
 # Check connection
 if not w3.is_connected():
@@ -25,134 +36,316 @@ if not private_key:
     print("❌ No private key found in .env file")
     exit(1)
 
-account = Account.from_key(private_key)
+account: LocalAccount = Account.from_key(private_key)
 address = account.address
 print(f"🔑 Using account: {address}")
 
-# Contract addresses - UPDATED based on successful example
-BATCH_ROUTER_ADDRESS = w3.to_checksum_address('0xe2fa4e1d17725e72dcdafe943ecf45df4b9e285b')  # Correct router address
+# Contract addresses
+BATCH_ROUTER_ADDRESS = w3.to_checksum_address('0xe2fa4e1d17725e72dcdafe943ecf45df4b9e285b')
 SDAI_ADDRESS = w3.to_checksum_address('0xaf204776c7245bF4147c2612BF6e5972Ee483701')
 WAGNO_ADDRESS = w3.to_checksum_address('0x7c16F0185A26Db0AE7a9377f23BC18ea7ce5d644')
-GNO_ADDRESS = w3.to_checksum_address('0x9c58bacc331c9aa871afd802db6379a98e80cedb')  # Added GNO token
-POOL_ADDRESS = w3.to_checksum_address('0xD1D7Fa8871d84d0E77020fc28B7Cd5718C446522')
+SDAI_WAGNO_POOL_ADDRESS = w3.to_checksum_address('0xD1D7Fa8871d84d0E77020fc28B7Cd5718C446522')
+PERMIT2_ADDRESS = w3.to_checksum_address('0x000000000022D473030F116dDEE9F6B43aC78BA3')
 
-# NOTE: For Balancer V3, Permit2 approvals are required
-# This script uses the traditional approval method which may not work for all V3 swaps
-# For a complete implementation, consider using the Balancer SDK with Permit2
-# See docs/balancer_v3_swapping.md for more information
+# Load contract ABIs
+with open('config/batch_router_abi.json', 'r') as f:
+    batch_router_abi = json.load(f)
 
-# ERC20 ABI (minimal for approval)
-ERC20_ABI = [
-    {"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-    {"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
-    {"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
-]
-
-# Load BatchRouter ABI
-try:
-    with open('config/batch_router_abi.json', 'r') as abi_file:
-        batch_router_abi = json.load(abi_file)
-except Exception as e:
-    print(f"❌ Error loading ABI: {e}")
-    exit(1)
+with open('config/permit2_abi.json', 'r') as f:
+    permit2_abi = json.load(f)
 
 # Initialize contracts
 batch_router = w3.eth.contract(address=BATCH_ROUTER_ADDRESS, abi=batch_router_abi)
-sdai_token = w3.eth.contract(address=SDAI_ADDRESS, abi=ERC20_ABI)
+permit2 = w3.eth.contract(address=PERMIT2_ADDRESS, abi=permit2_abi)
 
-# Check token balance
+# ERC20 ABI with balanceOf and other needed functions
+erc20_abi = [
+    {
+        "inputs": [{"name": "owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "spender", "type": "address"},
+            {"name": "amount", "type": "uint256"}
+        ],
+        "name": "approve",
+        "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "owner", "type": "address"},
+            {"name": "spender", "type": "address"}
+        ],
+        "name": "allowance",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+# Initialize token contracts
+sdai_token = w3.eth.contract(address=SDAI_ADDRESS, abi=erc20_abi)
+wagno_token = w3.eth.contract(address=WAGNO_ADDRESS, abi=erc20_abi)
+
+# Check sDAI balance
 sdai_balance = sdai_token.functions.balanceOf(address).call()
 print(f"💰 sDAI Balance: {w3.from_wei(sdai_balance, 'ether')}")
 
-if sdai_balance == 0:
-    print("❌ No sDAI balance to swap")
+# Check WAGNO balance
+wagno_balance = wagno_token.functions.balanceOf(address).call()
+print(f"💰 WAGNO Balance before swap: {w3.from_wei(wagno_balance, 'ether')}")
+
+# Amount to swap (0.01 sDAI)
+amount_to_swap = w3.to_wei(0.01, 'ether')
+
+if sdai_balance < amount_to_swap:
+    print("❌ Insufficient sDAI balance")
     exit(1)
 
-# Amount to swap (use a small amount for testing)
-amount_to_swap = min(sdai_balance, w3.to_wei(0.01, 'ether'))
-print(f"🔄 Swapping {w3.from_wei(amount_to_swap, 'ether')} sDAI to GNO via waGNO")
-
-# Helper function to get raw transaction bytes
-def get_raw_transaction(signed_tx):
-    """Get raw transaction bytes, compatible with different web3.py versions."""
-    if hasattr(signed_tx, 'rawTransaction'):
-        return signed_tx.rawTransaction
-    elif hasattr(signed_tx, 'raw_transaction'):
-        return signed_tx.raw_transaction
-    else:
-        # Try to access the raw transaction directly
-        return signed_tx.raw
-
-# Skip approval check and go straight to swap
-print("✅ Assuming BatchRouter is already approved to spend sDAI")
-print("⚠️ Note: Balancer V3 typically requires Permit2 approvals, which this script doesn't implement")
-
-# Prepare swap parameters
 try:
-    # Define swap path with TWO steps (matching the successful example)
-    paths = [{
+    print("\n1. Verifying swap path from sDAI to WAGNO...")
+    
+    # Define the swap path
+    swap_paths = [{
         'tokenIn': SDAI_ADDRESS,
         'steps': [
-            # Step 1: sDAI → waGNO through pool
             {
-                'pool': POOL_ADDRESS,
+                'pool': SDAI_WAGNO_POOL_ADDRESS,
                 'tokenOut': WAGNO_ADDRESS,
                 'isBuffer': False
-            },
-            # Step 2: waGNO → GNO using buffer
-            {
-                'pool': WAGNO_ADDRESS,
-                'tokenOut': GNO_ADDRESS,
-                'isBuffer': True
             }
         ],
         'exactAmountIn': amount_to_swap,
-        'minAmountOut': int(amount_to_swap * 0.9)  # 10% slippage
+        'minAmountOut': 0  # Set to 0 for testing, calculate in production
     }]
     
-    # Set deadline to a very large value (matching the successful example)
-    deadline = 9007199254740991
+    # Query the expected output
+    debug_print("About to call querySwapExactIn...")
+    expected_output = batch_router.functions.querySwapExactIn(
+        swap_paths,
+        address,
+        '0x'  # empty user data
+    ).call()
     
-    # Execute swap with swapExactIn
-    print("Executing swap with swapExactIn...")
-    swap_tx = batch_router.functions.swapExactIn(
-        paths,
-        deadline,
-        False,  # wethIsEth
-        b''     # userData
-    ).build_transaction({
-        'from': address,
-        'nonce': w3.eth.get_transaction_count(address),
-        'gas': 700000,
-        'gasPrice': w3.eth.gas_price,
-        'value': 0
-    })
+    debug_print(f"querySwapExactIn output: {expected_output}")
     
-    # Sign and send transaction
-    signed_tx = account.sign_transaction(swap_tx)
-    tx_hash = w3.eth.send_raw_transaction(get_raw_transaction(signed_tx))
-    print(f"📤 Swap transaction sent: {tx_hash.hex()}")
+    print(f"\nSwap query successful!")
     
-    # Wait for swap transaction to be mined
-    print("⏳ Waiting for transaction confirmation...")
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    
-    if receipt['status'] == 1:
-        print("✅ Swap successful!")
+    if expected_output and expected_output[0]:
+        expected_amount_out = expected_output[0][0]
+        print(f"✅ Expected WAGNO output: {w3.from_wei(expected_amount_out, 'ether')} WAGNO")
         
-        # Check new balances
-        new_sdai_balance = sdai_token.functions.balanceOf(address).call()
-        print(f"New sDAI Balance: {w3.from_wei(new_sdai_balance, 'ether')}")
+        # Let's set a lower minAmountOut (80% of expected) to account for price movement
+        min_amount_out = int(expected_amount_out * 0.8)
+        swap_paths[0]['minAmountOut'] = min_amount_out
+        print(f"Setting minAmountOut to 80% of expected: {w3.from_wei(min_amount_out, 'ether')} WAGNO")
         
-        # Initialize GNO token contract
-        gno_token = w3.eth.contract(address=GNO_ADDRESS, abi=ERC20_ABI)
-        gno_balance = gno_token.functions.balanceOf(address).call()
-        print(f"GNO Balance: {w3.from_wei(gno_balance, 'ether')}")
+        # First check if we already have approval through standard ERC20
+        print("\n2. Checking if SDAI is already approved for BatchRouter...")
+        
+        # Check current approval through standard ERC20
+        current_allowance = sdai_token.functions.allowance(
+            address,
+            BATCH_ROUTER_ADDRESS
+        ).call()
+        
+        if current_allowance >= amount_to_swap:
+            print(f"✅ SDAI already approved for BatchRouter ({w3.from_wei(current_allowance, 'ether')} approved)")
+            
+            # Use standard swapExactIn directly
+            print("\n3. Executing swap with existing approval...")
+            
+            # Set a longer deadline (1 hour from now) to ensure it doesn't expire
+            deadline = w3.eth.get_block('latest')['timestamp'] + (60 * 60)
+            debug_print(f"Setting deadline to: {deadline}")
+            
+            # Get the latest gas price and increase it
+            gas_price = w3.eth.gas_price
+            max_fee_per_gas = int(gas_price * 2)  # Double the current gas price
+            max_priority_fee_per_gas = int(gas_price * 1.5)  # 1.5x the current gas price
+            
+            debug_print(f"Current gas price: {gas_price}")
+            debug_print(f"Setting maxFeePerGas to: {max_fee_per_gas}")
+            debug_print(f"Setting maxPriorityFeePerGas to: {max_priority_fee_per_gas}")
+            
+            # Get latest nonce
+            nonce = w3.eth.get_transaction_count(address)
+            debug_print(f"Using nonce: {nonce}")
+            
+            # Estimate gas for the transaction
+            try:
+                estimated_gas = batch_router.functions.swapExactIn(
+                    swap_paths,
+                    deadline,
+                    False,  # wethIsEth
+                    '0x'    # userData
+                ).estimate_gas({
+                    'from': address,
+                    'nonce': nonce,
+                })
+                debug_print(f"Estimated gas: {estimated_gas}")
+                # Add 50% buffer to the estimated gas
+                gas_limit = int(estimated_gas * 1.5)
+            except Exception as e:
+                debug_print(f"Gas estimation failed: {str(e)}")
+                debug_print("Using default gas limit of 3 million")
+                gas_limit = 3000000  # Use a higher gas limit if estimation fails
+            
+            debug_print(f"Setting gas limit to: {gas_limit}")
+            
+            swap_tx = batch_router.functions.swapExactIn(
+                swap_paths,
+                deadline,
+                False,  # wethIsEth
+                '0x'    # userData
+            ).build_transaction({
+                'from': address,
+                'nonce': nonce,
+                'gas': gas_limit,
+                'maxFeePerGas': max_fee_per_gas,
+                'maxPriorityFeePerGas': max_priority_fee_per_gas,
+                'chainId': w3.eth.chain_id,
+            })
+            
+            debug_print(f"Built transaction: {swap_tx}")
+            
+            # Sign and send the transaction
+            signed_tx = w3.eth.account.sign_transaction(swap_tx, private_key)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            print(f"⏳ Transaction sent: {tx_hash.hex()}")
+            
+            # Wait for the transaction to complete
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+            print(f"\nTransaction receipt status: {receipt['status']}")
+            
+            debug_print(f"Full receipt: {receipt}")
+            
+            if receipt['status'] == 1:
+                print("✅ Swap successful!")
+                
+                # Check WAGNO balance after swap
+                new_wagno_balance = wagno_token.functions.balanceOf(address).call()
+                wagno_increase = new_wagno_balance - wagno_balance
+                
+                print(f"🔹 WAGNO Balance after swap: {w3.from_wei(new_wagno_balance, 'ether')}")
+                print(f"🔹 WAGNO Increase: {w3.from_wei(wagno_increase, 'ether')}")
+                
+                print(f"\nTransaction hash: {tx_hash.hex()}")
+                print(f"View on explorer: https://gnosisscan.io/tx/{tx_hash.hex()}")
+            else:
+                print("❌ Swap failed!")
+                print(f"Transaction hash: {tx_hash.hex()}")
+                print(f"Gas used: {receipt.get('gasUsed', 'unknown')}")
+                
+                # Try to get the revert reason if available
+                try:
+                    # Try to replay the transaction to get the revert reason
+                    debug_print("Attempting to get revert reason...")
+                    result = w3.eth.call({
+                        'to': BATCH_ROUTER_ADDRESS,
+                        'from': address,
+                        'data': swap_tx['data'],
+                        'value': 0
+                    }, receipt['blockNumber'] - 1)
+                    debug_print(f"Call result: {result}")
+                except Exception as call_error:
+                    error_str = str(call_error)
+                    debug_print(f"Error during call: {error_str}")
+                    if "execution reverted" in error_str and "reason" in error_str:
+                        revert_reason = error_str.split("reason", 1)[1].strip()
+                        print(f"Revert reason: {revert_reason}")
+                
+                print(f"View details on: https://gnosisscan.io/tx/{tx_hash.hex()}")
+                print("Consider checking transaction details on https://gnosis.blockscout.com or using Tenderly for deeper debugging")
+        else:
+            print(f"Current allowance ({w3.from_wei(current_allowance, 'ether')}) is insufficient")
+            print("Approving SDAI for BatchRouter...")
+            
+            # Approve SDAI to be spent by BatchRouter
+            approve_tx = sdai_token.functions.approve(
+                BATCH_ROUTER_ADDRESS,
+                amount_to_swap * 10  # Approve 10x the amount to reduce future approvals
+            ).build_transaction({
+                'from': address,
+                'nonce': w3.eth.get_transaction_count(address),
+                'gas': 100000,
+                'maxFeePerGas': w3.eth.gas_price,
+                'maxPriorityFeePerGas': w3.eth.gas_price,
+                'chainId': w3.eth.chain_id,
+            })
+            
+            # Sign and send the approval transaction
+            signed_tx = w3.eth.account.sign_transaction(approve_tx, private_key)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            print(f"⏳ Approval transaction sent: {tx_hash.hex()}")
+            
+            # Wait for the transaction to complete
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+            if receipt['status'] == 1:
+                print("✅ SDAI approved for BatchRouter")
+                
+                # Now execute the swap using swapExactIn
+                print("\n3. Executing swap transaction...")
+                
+                # Set a longer deadline (1 hour from now)
+                deadline = w3.eth.get_block('latest')['timestamp'] + (60 * 60)
+                
+                swap_tx = batch_router.functions.swapExactIn(
+                    swap_paths,
+                    deadline,
+                    False,  # wethIsEth
+                    '0x'    # userData
+                ).build_transaction({
+                    'from': address,
+                    'nonce': w3.eth.get_transaction_count(address),
+                    'gas': 3000000,  # Increased gas limit to 3 million
+                    'maxFeePerGas': w3.eth.gas_price * 2,
+                    'maxPriorityFeePerGas': w3.eth.gas_price,
+                    'chainId': w3.eth.chain_id,
+                })
+                
+                # Sign and send the transaction
+                signed_tx = w3.eth.account.sign_transaction(swap_tx, private_key)
+                tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+                print(f"⏳ Transaction sent: {tx_hash.hex()}")
+                
+                # Wait for the transaction to complete
+                receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+                print(f"\nTransaction receipt status: {receipt['status']}")
+                
+                if receipt['status'] == 1:
+                    print("✅ Swap successful!")
+                    
+                    # Check WAGNO balance after swap
+                    new_wagno_balance = wagno_token.functions.balanceOf(address).call()
+                    print(f"🔹 WAGNO Balance after swap: {w3.from_wei(new_wagno_balance, 'ether')}")
+                    print(f"🔹 WAGNO Increase: {w3.from_wei(new_wagno_balance - wagno_balance, 'ether')}")
+                    
+                    print(f"\nTransaction hash: {tx_hash.hex()}")
+                    print(f"View on explorer: https://gnosisscan.io/tx/{tx_hash.hex()}")
+                else:
+                    print("❌ Swap failed!")
+                    print(f"Transaction hash: {tx_hash.hex()}")
+                    print(f"Gas used: {receipt.get('gasUsed', 'unknown')}")
+                    print(f"View details on: https://gnosisscan.io/tx/{tx_hash.hex()}")
+            else:
+                print("❌ Approval failed!")
+                print(f"Transaction hash: {tx_hash.hex()}")
+                print(f"View details on: https://gnosisscan.io/tx/{tx_hash.hex()}")
+                
     else:
-        print("❌ Swap failed")
-        print("⚠️ This may be due to missing Permit2 approvals required for V3 swaps")
-        
+        print("❌ Couldn't determine expected output amount")
+
 except Exception as e:
-    print(f"❌ Error during swap: {e}")
-    print("⚠️ If the error is related to approvals, consider implementing Permit2 approvals")
-    exit(1) 
+    print(f"❌ Error during execution: {str(e)}")
+    if hasattr(e, 'args') and len(e.args) > 0:
+        print("Error details:", e.args[0])
+    print("\nTraceback:")
+    traceback.print_exc()
+    exit(1)

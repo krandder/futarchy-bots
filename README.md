@@ -1,135 +1,116 @@
-# Futarchy Trading Bot
+# Futarchy Bots
 
-A modular bot for trading on Gnosis Chain futarchy markets with support for GNO/sDAI trading via CoW Swap.
-
-## Features
-
-- Trade between GNO and sDAI using CoW Swap's API
-- Split tokens into YES/NO conditional tokens
-- Execute trades on futarchy markets using SushiSwap V3
-- Convert between xDAI, wxDAI, and sDAI
-- Multiple trading strategies
-  - Simple monitoring
-  - Probability threshold-based trading
-  - Arbitrage between YES and NO tokens
-- Interactive command-line interface
-- Modular, well-structured codebase
-
-## Installation
-
-1. Clone the repository:
-```
-git clone https://github.com/yourusername/futarchy-trading.git
-cd futarchy-trading
-```
-
-2. Install the package:
-```
-pip install -e .
-```
-
-3. Create a `.env` file with your configuration:
-```
-GNOSIS_RPC_URL=https://rpc.ankr.com/gnosis  # Or your preferred RPC endpoint
-PRIVATE_KEY=your_private_key_here           # Without 0x prefix
-```
-
-## Usage
-
-### Interactive Mode
-
-Run the bot in interactive mode:
-
-```
-python -m futarchy_trading.main
-```
-
-Or using the installed command:
-
-```
-futarchy-bot
-```
-
-### Strategy Modes
-
-Run specific strategies directly:
-
-```
-# Monitoring
-futarchy-bot monitor --iterations 10 --interval 30
-
-# Probability threshold strategy
-futarchy-bot probability --buy 0.75 --sell 0.25 --amount 0.2
-
-# Arbitrage strategy
-futarchy-bot arbitrage --diff 0.03 --amount 0.15
-```
+A collection of trading bots for interacting with Futarchy markets on Gnosis Chain.
 
 ## Project Structure
 
 ```
-futarchy_trading/
-├── config/
-│   └── constants.py         # All constants, addresses, ABIs
-├── core/
-│   ├── base_bot.py          # Base bot functionality
-│   └── futarchy_bot.py      # Main bot implementation
-├── utils/
-│   ├── web3_utils.py        # Web3 connection, middleware setup
-│   └── helpers.py           # Helper functions
-├── exchanges/
-│   ├── cowswap.py           # CowSwap API integration
-│   └── sushiswap.py         # SushiSwap integration
-├── strategies/
-│   ├── monitoring.py        # Simple monitoring strategy
-│   ├── probability.py       # Probability threshold strategy
-│   └── arbitrage.py         # Arbitrage strategy
-├── cli/
-│   └── menu.py              # Interactive CLI menu
-└── main.py                  # Entry point
+futarchy-bots/
+├── core/                  # Core bot functionality
+│   └── futarchy_bot.py    # Main bot class
+├── exchanges/             # Exchange-specific implementations
+│   ├── aave/              # AAVE lending protocol integration
+│   └── balancer/          # Balancer DEX integration
+│       ├── permit2.py     # Permit2 authorization handler
+│       └── swap.py        # Balancer swap handler
+├── scripts/               # Utility scripts
+│   └── debug/             # Debugging tools
+├── config/                # Configuration files
+│   └── constants.py       # Contract addresses and constants
+├── menu.py                # Interactive CLI menu
+└── README.md              # This file
 ```
 
-## CoW Swap Integration
+## Features
 
-This bot uses [CoW Swap API](https://docs.cow.fi/cow-protocol/reference/apis/orderbook) to trade between GNO and sDAI tokens. When submitting an order, it:
+- **Permit2 Integration**: Efficient token approvals using Uniswap's Permit2 protocol
+- **Balancer Swaps**: Execute token swaps on Balancer pools
+- **Interactive Menu**: User-friendly command-line interface
+- **Balance Tracking**: Automatic balance refreshing and display
+- **Error Handling**: Comprehensive error handling and debugging
 
-1. Estimates fee and minimum buy amount
-2. Approves the settlement contract to spend tokens
-3. Creates and signs the order
-4. Submits it to the CoW Swap API
-5. Returns the order UID for tracking
+## Prerequisites
 
-Orders on CoW Swap are settled off-chain and may take some time to execute.
+- Python 3.8+
+- Web3.py
+- Private key with access to tokens on Gnosis Chain
+- RPC endpoint for Gnosis Chain
+- XDAI for gas fees (native currency on Gnosis Chain)
 
-## Adding New Strategies
+## Setup
 
-To add a new strategy, create a new file in the `strategies` directory:
-
-```python
-# strategies/my_strategy.py
-
-def my_strategy(bot, param1=default1, param2=default2):
-    """
-    My custom trading strategy.
-    
-    Args:
-        bot: FutarchyBot instance
-        param1: First parameter
-        param2: Second parameter
-        
-    Returns:
-        bool: Success or failure
-    """
-    print("Running my custom strategy")
-    
-    # Strategy implementation
-    # ...
-    
-    return True
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/futarchy-bots.git
+cd futarchy-bots
 ```
 
-Then add it to the CLI menu or command-line interface as needed.
+2. Create a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+4. Create a `.env` file with your configuration:
+```
+PRIVATE_KEY=your_private_key_here
+RPC_URL=https://gnosis-mainnet.public.blastapi.io
+```
+
+## Usage
+
+### Interactive Menu
+
+Run the interactive menu to access all bot functions:
+
+```bash
+python menu.py
+```
+
+Add the `--verbose` flag for detailed debug information:
+
+```bash
+python menu.py --verbose
+```
+
+### Menu Options
+
+1. **Refresh Balances**: View current token balances (sDAI, waGNO, XDAI)
+2. **Check Permit2 Status**: Check current Permit2 authorizations
+3. **Approve sDAI for Permit2**: Approve sDAI to be used with Permit2
+4. **Create Permit for BatchRouter**: Create a Permit2 authorization for the BatchRouter
+5. **Swap sDAI to waGNO**: Execute a swap from sDAI to waGNO
+6. **Swap waGNO to sDAI**: Execute a swap from waGNO to sDAI
+
+## Permit2 Workflow
+
+1. Approve tokens for Permit2 (one-time setup)
+2. Create a permit for a specific spender (e.g., BatchRouter)
+3. Execute transactions through the spender without additional approvals
+
+## Development
+
+### Adding New Exchange Integrations
+
+1. Create a new directory under `exchanges/`
+2. Implement the necessary handler classes
+3. Update the menu system to include the new functionality
+
+### Configuration
+
+Edit `config/constants.py` to update contract addresses and other constants.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+[MIT License](LICENSE)
+
+## Acknowledgements
+
+- [Uniswap Permit2](https://github.com/Uniswap/permit2)
+- [Balancer Protocol](https://balancer.fi/)
+- [Web3.py](https://web3py.readthedocs.io/)

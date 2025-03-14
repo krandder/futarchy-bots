@@ -22,6 +22,11 @@ CONTRACT_ADDRESSES = {
     "poolNo": "0x6E33153115Ab58dab0e0F1E3a2ccda6e67FA5cD7",
     "sdaiRateProvider": "0x89C80A4540A00b5270347E02e2E144c71da2EceD",
     "wxdai": "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d",
+    "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    "batchRouter": "0xe2fa4e1d17725e72dcdAfe943Ecf45dF4B9E285b",
+    "balancerVault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+    "balancerPool": "0xd1d7fa8871d84d0e77020fc28b7cd5718c446522",
+    "wagno": "0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644",
 }
 
 # Pool configurations
@@ -50,12 +55,37 @@ TOKEN_CONFIG = {
         "decimals": 18,
         "yes_address": "0x177304d505eCA60E1aE0dAF1bba4A4c4181dB8Ad",
         "no_address": "0xf1B3E5Ffc0219A4F8C0ac69EC98C97709EdfB6c9"
+    },
+    "wagno": {
+        "name": "waGNO",
+        "address": "0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644",
+        "decimals": 18
     }
 }
 
-# Constants for SushiSwap V3
-MIN_SQRT_RATIO = 4295128740
-MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970341
+# Balancer configurations
+BALANCER_CONFIG = {
+    "vault_address": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+    "pool_address": "0xd1d7fa8871d84d0e77020fc28b7cd5718c446522",
+    "pool_id": "0xD1D7Fa8871d84d0E77020fc28B7Cd5718C4465220002000000000000000001d7"
+}
+
+# Default swap configuration
+DEFAULT_SWAP_CONFIG = {
+    "amount_to_swap": 100000000000000,  # 0.0001 tokens with 18 decimals
+    "slippage_percentage": 0.5,  # 0.5% slippage
+}
+
+# Default permit configuration
+DEFAULT_PERMIT_CONFIG = {
+    "amount": 1000000000000000,  # 0.001 tokens with 18 decimals
+    "expiration_hours": 24,
+    "sig_deadline_hours": 1
+}
+
+# Min and max sqrt ratios for Uniswap V3 style pools
+MIN_SQRT_RATIO = 4295128739
+MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342
 
 # Contract ABIs
 ERC20_ABI = [
@@ -92,13 +122,6 @@ WXDAI_ABI = [
 SDAI_DEPOSIT_ABI = [
     {"inputs":[{"internalType":"uint256","name":"assets","type":"uint256"},{"internalType":"address","name":"receiver","type":"address"}],"name":"deposit","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}
 ]
-
-# Add to constants.py
-
-# Balancer and Aave addresses
-BALANCER_VAULT_ADDRESS = "0xBA12222222228d8Ba445958a75a0704d566BF2C8"
-BALANCER_POOL_ADDRESS = "0xd1d7fa8871d84d0e77020fc28b7cd5718c446522"
-WAGNO_ADDRESS = "0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644"
 
 # ABIs for Balancer and Aave contracts
 BALANCER_VAULT_ABI = [
