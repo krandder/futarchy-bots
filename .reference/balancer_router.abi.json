@@ -290,7 +290,7 @@
          {
             "components":[
                {
-                  "internalType":"contract IERC20",
+                  "internalType":"address",
                   "name":"tokenIn",
                   "type":"address"
                },

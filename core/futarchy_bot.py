@@ -16,6 +16,7 @@ from utils.web3_utils import get_raw_transaction
 from exchanges.cowswap import CowSwapExchange
 from core.base_bot import BaseBot
 from exchanges.aave_balancer import AaveBalancerHandler
+from exchanges.sushiswap import SushiSwapExchange
 
 class FutarchyBot(BaseBot):
     """Main Futarchy Trading Bot implementation"""
@@ -448,312 +449,198 @@ class FutarchyBot(BaseBot):
             print(f"❌ Error removing collateral: {e}")
             return False
     
-    def execute_swap(self, token_type, is_buy, amount, is_yes_token=True):
+    def execute_swap(self, token_in, token_out, amount, slippage_percentage=0.5):
         """
-        Execute a swap of tokens using SushiSwap V3.
+        Execute a swap between tokens.
         
         Args:
-            token_type: Token type ('currency' or 'company')
-            is_buy: True for buy, False for sell
-            amount: Amount to swap
-            is_yes_token: True for YES tokens, False for NO tokens
+            token_in: Address of token to sell
+            token_out: Address of token to buy
+            amount: Amount to swap in wei
+            slippage_percentage: Slippage tolerance percentage
             
         Returns:
             bool: Success or failure
         """
-        if self.account is None:
-            raise ValueError("No account configured for transactions")
+        # Determine if this is a YES or NO token
+        is_yes_token = token_in == TOKEN_CONFIG["company"]["yes_address"] or token_out == TOKEN_CONFIG["company"]["yes_address"]
+        is_no_token = token_in == TOKEN_CONFIG["company"]["no_address"] or token_out == TOKEN_CONFIG["company"]["no_address"]
         
-        # Convert amount to wei
-        amount_wei = self.w3.to_wei(amount, 'ether')
-        
-        # Determine which tokens to use in the swap
-        if token_type == "currency":
-            base_token_address = TOKEN_CONFIG["currency"]["address"]
-            yes_token_address = TOKEN_CONFIG["currency"]["yes_address"]
-            no_token_address = TOKEN_CONFIG["currency"]["no_address"]
-            token_name = TOKEN_CONFIG["currency"]["name"]
-        elif token_type == "company":
-            base_token_address = TOKEN_CONFIG["company"]["address"]
-            yes_token_address = TOKEN_CONFIG["company"]["yes_address"]
-            no_token_address = TOKEN_CONFIG["company"]["no_address"]
-            token_name = TOKEN_CONFIG["company"]["name"]
+        # Determine which pool to use
+        if is_yes_token:
+            pool_address = CONTRACT_ADDRESSES["poolYes"]
+        elif is_no_token:
+            pool_address = CONTRACT_ADDRESSES["poolNo"]
         else:
-            raise ValueError(f"Invalid token type: {token_type}")
+            # For other tokens, use Balancer
+            return self.execute_balancer_swap(token_in, token_out, amount, slippage_percentage)
         
-        # When buying YES GNO tokens, we use YES sDAI tokens as payment
-        # When buying NO GNO tokens, we use NO sDAI tokens as payment
-        if is_buy:
-            # For buying, we need to use the correct YES/NO sDAI token as input
-            if is_yes_token:
-                # To buy YES GNO, use YES sDAI
-                token_in = TOKEN_CONFIG["currency"]["yes_address"]  # YES sDAI
-                token_out = yes_token_address  # YES GNO
-                print(f"Using YES sDAI tokens to buy YES {token_name} tokens")
-            else:
-                # To buy NO GNO, use NO sDAI
-                token_in = TOKEN_CONFIG["currency"]["no_address"]  # NO sDAI
-                token_out = no_token_address  # NO GNO
-                print(f"Using NO sDAI tokens to buy NO {token_name} tokens")
-        else:
-            # For selling, we're selling the token_type's YES/NO tokens to get sDAI
-            if is_yes_token:
-                token_in = yes_token_address  # YES GNO
-                token_out = TOKEN_CONFIG["currency"]["yes_address"]  # YES sDAI
-                print(f"Selling YES {token_name} tokens for YES sDAI")
-            else:
-                token_in = no_token_address  # NO GNO
-                token_out = TOKEN_CONFIG["currency"]["no_address"]  # NO sDAI
-                print(f"Selling NO {token_name} tokens for NO sDAI")
-        
-        # Check balance of the token we're using as input
-        token_in_contract = self.get_token_contract(token_in)
-        token_in_balance = token_in_contract.functions.balanceOf(self.address).call()
-        
-        print(f"Checking balance for token: {token_in}")
-        print(f"Required: {self.w3.from_wei(amount_wei, 'ether')}")
-        print(f"Available: {self.w3.from_wei(token_in_balance, 'ether')}")
-        
-        if token_in_balance < amount_wei:
-            print(f"❌ Insufficient token balance for swap")
-            return False
-        
-        # Approve token for SushiSwap
-        if not self.approve_token(token_in_contract, CONTRACT_ADDRESSES["sushiswap"], amount_wei):
-            return False
-        
-        # Determine which pool to use based on is_yes_token
-        pool_address = POOL_CONFIG_YES["address"] if is_yes_token else POOL_CONFIG_NO["address"]
-        
-        # Create pool contract
+        # Determine if this is a zero_for_one swap
         pool_contract = self.w3.eth.contract(
             address=self.w3.to_checksum_address(pool_address),
             abi=UNISWAP_V3_POOL_ABI
         )
         
-        # Get token0 and token1 from the pool
+        token0 = pool_contract.functions.token0().call()
+        zero_for_one = token_in.lower() == token0.lower()
+        
+        # Execute swap using SushiSwap
+        sushiswap = SushiSwapExchange(self)
+        return sushiswap.swap(pool_address, token_in, token_out, amount, zero_for_one)
+    
+    def add_liquidity_v3(self, pool_address, token0_amount, token1_amount, price_range_percentage=10, slippage_percentage=0.5):
+        """
+        Add concentrated liquidity to a SushiSwap V3 pool.
+        
+        Args:
+            pool_address: Address of the pool
+            token0_amount: Amount of token0 to add (in wei)
+            token1_amount: Amount of token1 to add (in wei)
+            price_range_percentage: Percentage range around current price (e.g., 10 for ±10%)
+            slippage_percentage: Slippage tolerance percentage
+            
+        Returns:
+            dict: Information about the created position or None if failed
+        """
+        sushiswap = SushiSwapExchange(self)
+        return sushiswap.add_liquidity(pool_address, token0_amount, token1_amount, price_range_percentage, slippage_percentage)
+    
+    def increase_liquidity_v3(self, token_id, token0_amount, token1_amount, slippage_percentage=0.5):
+        """
+        Increase liquidity in an existing SushiSwap V3 position.
+        
+        Args:
+            token_id: ID of the position NFT
+            token0_amount: Amount of token0 to add (in wei)
+            token1_amount: Amount of token1 to add (in wei)
+            slippage_percentage: Slippage tolerance percentage
+            
+        Returns:
+            bool: Success or failure
+        """
+        sushiswap = SushiSwapExchange(self)
+        return sushiswap.increase_liquidity(token_id, token0_amount, token1_amount, slippage_percentage)
+    
+    def decrease_liquidity_v3(self, token_id, liquidity_percentage, slippage_percentage=0.5):
+        """
+        Decrease liquidity in an existing SushiSwap V3 position.
+        
+        Args:
+            token_id: ID of the position NFT
+            liquidity_percentage: Percentage of liquidity to remove (0-100)
+            slippage_percentage: Slippage tolerance percentage
+            
+        Returns:
+            dict: Amounts of token0 and token1 received, or None if failed
+        """
+        sushiswap = SushiSwapExchange(self)
+        return sushiswap.decrease_liquidity(token_id, liquidity_percentage, slippage_percentage)
+    
+    def collect_fees_v3(self, token_id):
+        """
+        Collect accumulated fees from a SushiSwap V3 position.
+        
+        Args:
+            token_id: ID of the position NFT
+            
+        Returns:
+            dict: Amounts of token0 and token1 collected, or None if failed
+        """
+        sushiswap = SushiSwapExchange(self)
+        return sushiswap.collect_fees(token_id)
+    
+    def get_position_info_v3(self, token_id):
+        """
+        Get detailed information about a SushiSwap V3 position.
+        
+        Args:
+            token_id: ID of the position NFT
+            
+        Returns:
+            dict: Position information
+        """
+        sushiswap = SushiSwapExchange(self)
+        return sushiswap.get_position_info(token_id)
+    
+    def add_liquidity_to_yes_pool(self, gno_amount, sdai_amount, price_range_percentage=10, slippage_percentage=0.5):
+        """
+        Add concentrated liquidity to the YES pool.
+        
+        Args:
+            gno_amount: Amount of GNO YES tokens to add (in ether units)
+            sdai_amount: Amount of sDAI YES tokens to add (in ether units)
+            price_range_percentage: Percentage range around current price (e.g., 10 for ±10%)
+            slippage_percentage: Slippage tolerance percentage
+            
+        Returns:
+            dict: Information about the created position or None if failed
+        """
+        # Convert amounts to wei
+        gno_amount_wei = self.w3.to_wei(gno_amount, 'ether')
+        sdai_amount_wei = self.w3.to_wei(sdai_amount, 'ether')
+        
+        # Get YES pool address
+        pool_address = CONTRACT_ADDRESSES["poolYes"]
+        
+        # Get pool information to determine token0 and token1
+        pool_contract = self.w3.eth.contract(
+            address=self.w3.to_checksum_address(pool_address),
+            abi=UNISWAP_V3_POOL_ABI
+        )
+        
         token0 = pool_contract.functions.token0().call()
         token1 = pool_contract.functions.token1().call()
         
-        # Determine zeroForOne parameter (if tokenIn is token0, then zeroForOne is true)
-        zero_for_one = self.w3.to_checksum_address(token_in) == self.w3.to_checksum_address(token0)
+        # Determine which token is GNO YES and which is sDAI YES
+        if token0.lower() == TOKEN_CONFIG["company"]["yes_address"].lower():
+            token0_amount = gno_amount_wei
+            token1_amount = sdai_amount_wei
+        else:
+            token0_amount = sdai_amount_wei
+            token1_amount = gno_amount_wei
         
-        # Set sqrtPriceLimitX96 based on swap direction
-        sqrt_price_limit_x96 = MIN_SQRT_RATIO if zero_for_one else MAX_SQRT_RATIO
-        
-        print(f"📝 Executing swap: {'Buy' if is_buy else 'Sell'} {amount} {'YES' if is_yes_token else 'NO'} {token_name} tokens")
-        print(f"Pool address: {pool_address}")
-        print(f"Token0: {token0}")
-        print(f"Token1: {token1}")
-        print(f"Token In: {token_in}")
-        print(f"Token Out: {token_out}")
-        print(f"ZeroForOne: {zero_for_one}")
-        
-        try:
-            # Build transaction for swap
-            swap_tx = self.sushiswap_router.functions.swap(
-                self.w3.to_checksum_address(pool_address),  # pool address
-                self.address,  # recipient
-                zero_for_one,  # zeroForOne
-                int(amount_wei),  # amountSpecified
-                int(sqrt_price_limit_x96),  # sqrtPriceLimitX96
-                b''  # data - empty bytes
-            ).build_transaction({
-                'from': self.address,
-                'nonce': self.w3.eth.get_transaction_count(self.address),
-                'gas': 1000000,  # INCREASED gas limit substantially
-                'gasPrice': self.w3.eth.gas_price,
-                'chainId': self.w3.eth.chain_id,
-            })
-            
-            # Try to estimate gas to catch potential issues before sending
-            try:
-                estimated_gas = self.w3.eth.estimate_gas(swap_tx)
-                print(f"Estimated gas for this transaction: {estimated_gas}")
-                
-                # If estimated gas is more than 80% of our limit, increase limit further
-                if estimated_gas > 800000:
-                    swap_tx['gas'] = int(estimated_gas * 1.25)  # Add 25% buffer
-                    print(f"Increased gas limit to: {swap_tx['gas']}")
-            except Exception as gas_error:
-                print(f"⚠️ Gas estimation failed: {gas_error}")
-                print(f"⚠️ This may indicate the transaction will fail, but proceeding anyway...")
-            
-            signed_swap_tx = self.w3.eth.account.sign_transaction(swap_tx, self.account.key)
-            swap_tx_hash = self.w3.eth.send_raw_transaction(get_raw_transaction(signed_swap_tx))
-            
-            print(f"⏳ Swap transaction sent: {swap_tx_hash.hex()}")
-            
-            # Wait for confirmation
-            swap_receipt = self.w3.eth.wait_for_transaction_receipt(swap_tx_hash)
-            
-            if swap_receipt['status'] == 1:
-                operation = "bought" if is_buy else "sold"
-                token_type_text = "YES" if is_yes_token else "NO"
-                print(f"✅ Successfully {operation} {amount} {token_type_text} {token_name} tokens!")
-                return True
-            else:
-                print(f"❌ Swap failed with receipt: {swap_receipt}")
-                return False
-        
-        except Exception as e:
-            print(f"❌ Error executing swap: {e}")
-            return False
+        # Add liquidity
+        return self.add_liquidity_v3(pool_address, token0_amount, token1_amount, price_range_percentage, slippage_percentage)
     
-    def convert_xdai_to_wxdai(self, amount):
+    def add_liquidity_to_no_pool(self, gno_amount, sdai_amount, price_range_percentage=10, slippage_percentage=0.5):
         """
-        Convert native XDAI to wrapped XDAI (WXDAI).
+        Add concentrated liquidity to the NO pool.
         
         Args:
-            amount: Amount to convert
+            gno_amount: Amount of GNO NO tokens to add (in ether units)
+            sdai_amount: Amount of sDAI NO tokens to add (in ether units)
+            price_range_percentage: Percentage range around current price (e.g., 10 for ±10%)
+            slippage_percentage: Slippage tolerance percentage
             
         Returns:
-            bool: Success or failure
+            dict: Information about the created position or None if failed
         """
-        if self.account is None:
-            raise ValueError("No account configured for transactions")
+        # Convert amounts to wei
+        gno_amount_wei = self.w3.to_wei(gno_amount, 'ether')
+        sdai_amount_wei = self.w3.to_wei(sdai_amount, 'ether')
         
-        # Convert amount to wei
-        amount_wei = self.w3.to_wei(amount, 'ether')
+        # Get NO pool address
+        pool_address = CONTRACT_ADDRESSES["poolNo"]
         
-        # Check if we have enough XDAI
-        xdai_balance = self.w3.eth.get_balance(self.address)
-        if xdai_balance < amount_wei:
-            print(f"❌ Insufficient XDAI balance")
-            print(f"   Required: {self.w3.from_wei(amount_wei, 'ether')} XDAI")
-            print(f"   Available: {self.w3.from_wei(xdai_balance, 'ether')} XDAI")
-            return False
-        
-        # Create WXDAI contract instance
-        wxdai_contract = self.w3.eth.contract(
-            address=self.w3.to_checksum_address(CONTRACT_ADDRESSES["wxdai"]),
-            abi=WXDAI_ABI
+        # Get pool information to determine token0 and token1
+        pool_contract = self.w3.eth.contract(
+            address=self.w3.to_checksum_address(pool_address),
+            abi=UNISWAP_V3_POOL_ABI
         )
         
-        print(f"📝 Converting {amount} XDAI to WXDAI...")
+        token0 = pool_contract.functions.token0().call()
+        token1 = pool_contract.functions.token1().call()
         
-        try:
-            # Build transaction to deposit XDAI into WXDAI contract
-            deposit_function = wxdai_contract.functions.deposit()
-            
-            tx = deposit_function.build_transaction({
-                'from': self.address,
-                'value': amount_wei,
-                'gas': 100000,
-                'gasPrice': self.w3.eth.gas_price,
-                'nonce': self.w3.eth.get_transaction_count(self.address),
-                'chainId': self.w3.eth.chain_id,
-            })
-            
-            # Sign and send transaction
-            signed_tx = self.w3.eth.account.sign_transaction(tx, self.account.key)
-            tx_hash = self.w3.eth.send_raw_transaction(get_raw_transaction(signed_tx))
-            
-            print(f"⏳ WXDAI conversion transaction sent: {tx_hash.hex()}")
-            
-            # Wait for confirmation
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
-            
-            if receipt['status'] == 1:
-                print(f"✅ Successfully converted {amount} XDAI to WXDAI")
-                return True
-            else:
-                print(f"❌ XDAI conversion failed")
-                return False
-        except Exception as e:
-            print(f"❌ Error converting XDAI to WXDAI: {e}")
-            return False
-    
-    def convert_wxdai_to_sdai(self, amount):
-        """
-        Convert WXDAI to SDAI.
+        # Determine which token is GNO NO and which is sDAI NO
+        if token0.lower() == TOKEN_CONFIG["company"]["no_address"].lower():
+            token0_amount = gno_amount_wei
+            token1_amount = sdai_amount_wei
+        else:
+            token0_amount = sdai_amount_wei
+            token1_amount = gno_amount_wei
         
-        Args:
-            amount: Amount to convert
-            
-        Returns:
-            bool: Success or failure
-        """
-        if self.account is None:
-            raise ValueError("No account configured for transactions")
-        
-        # Convert amount to wei
-        amount_wei = self.w3.to_wei(amount, 'ether')
-        
-        # Check WXDAI balance
-        wxdai_contract = self.w3.eth.contract(
-            address=self.w3.to_checksum_address(CONTRACT_ADDRESSES["wxdai"]),
-            abi=WXDAI_ABI
-        )
-        
-        wxdai_balance = wxdai_contract.functions.balanceOf(self.address).call()
-        if wxdai_balance < amount_wei:
-            print(f"❌ Insufficient WXDAI balance")
-            print(f"   Required: {self.w3.from_wei(amount_wei, 'ether')} WXDAI")
-            print(f"   Available: {self.w3.from_wei(wxdai_balance, 'ether')} WXDAI")
-            return False
-        
-        try:
-            print(f"📝 Converting {amount} WXDAI to SDAI...")
-            
-            # The sDAI contract address
-            sdai_address = TOKEN_CONFIG["currency"]["address"]
-            
-            # First approve the sDAI contract to spend the WXDAI
-            if not self.approve_token(wxdai_contract, sdai_address, amount_wei):
-                return False
-            
-            # Now, use the deposit function to convert WXDAI to sDAI
-            sdai_contract = self.w3.eth.contract(
-                address=self.w3.to_checksum_address(sdai_address),
-                abi=SDAI_DEPOSIT_ABI
-            )
-            
-            print(f"📝 Depositing WXDAI to get sDAI...")
-            
-            # Call the deposit function with amount and receiver address
-            deposit_tx = sdai_contract.functions.deposit(
-                amount_wei,   # assets amount
-                self.address  # receiver address
-            ).build_transaction({
-                'from': self.address,
-                'gas': 500000,  # Increase gas limit
-                'gasPrice': self.w3.eth.gas_price,
-                'nonce': self.w3.eth.get_transaction_count(self.address),
-                'chainId': self.w3.eth.chain_id,
-            })
-            
-            signed_deposit_tx = self.w3.eth.account.sign_transaction(deposit_tx, self.account.key)
-            deposit_tx_hash = self.w3.eth.send_raw_transaction(get_raw_transaction(signed_deposit_tx))
-            
-            print(f"⏳ sDAI deposit transaction sent: {deposit_tx_hash.hex()}")
-            
-            # Wait for deposit confirmation
-            deposit_receipt = self.w3.eth.wait_for_transaction_receipt(deposit_tx_hash)
-            
-            if deposit_receipt['status'] == 1:
-                print(f"✅ Successfully converted {amount} WXDAI to sDAI")
-                return True
-            else:
-                print(f"❌ sDAI deposit failed with receipt: {deposit_receipt}")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Error converting WXDAI to sDAI: {e}")
-            return False
-    
-    def add_sdai_collateral(self, amount):
-        """
-        Add sDAI as collateral by splitting it into YES and NO tokens.
-        
-        Args:
-            amount: Amount to add
-            
-        Returns:
-            bool: Success or failure
-        """
-        # This is essentially the same as add_collateral but specifically for sDAI
-        return self.add_collateral("currency", amount)
+        # Add liquidity
+        return self.add_liquidity_v3(pool_address, token0_amount, token1_amount, price_range_percentage, slippage_percentage)
     
     def swap_sdai_to_gno_via_cowswap(self, amount, min_buy_amount=None):
         """

@@ -1,43 +1,55 @@
 # Futarchy Bots
 
-A collection of trading bots for interacting with Futarchy markets on Gnosis Chain.
+A collection of tools for interacting with futarchy markets on Gnosis Chain.
 
-## Project Structure
+## Tools
 
+### Price Impact Calculator
+
+A tool for calculating the price impact of trades in various pools:
+
+- Balancer sDAI/waGNO pool
+- SushiSwap YES conditional pool
+- SushiSwap NO conditional pool
+
+The calculator provides accurate price impact calculations for different trade sizes, helping traders make informed decisions.
+
+### SushiSwap V3 Liquidity Provider
+
+A tool for adding and managing concentrated liquidity positions in SushiSwap V3 pools:
+
+- Create new concentrated liquidity positions with custom price ranges
+- Increase liquidity in existing positions
+- Decrease liquidity from positions
+- Collect accumulated fees
+- View detailed position information
+
+This functionality allows users to provide liquidity to the YES and NO markets with greater capital efficiency.
+
+## Usage
+
+### Price Impact Calculator
+
+```bash
+python price_impact_calculator.py --amount 0.1
 ```
-futarchy-bots/
-├── core/                  # Core bot functionality
-│   └── futarchy_bot.py    # Main bot class
-├── exchanges/             # Exchange-specific implementations
-│   ├── aave/              # AAVE lending protocol integration
-│   └── balancer/          # Balancer DEX integration
-│       ├── permit2.py     # Permit2 authorization handler
-│       └── swap.py        # Balancer swap handler
-├── scripts/               # Utility scripts
-│   └── debug/             # Debugging tools
-├── config/                # Configuration files
-│   └── constants.py       # Contract addresses and constants
-├── menu.py                # Interactive CLI menu
-└── README.md              # This file
-```
 
-## Features
+Options:
+- `--amount`: Amount of GNO to calculate price impact for (default: 0.01)
 
-- **Permit2 Integration**: Efficient token approvals using Uniswap's Permit2 protocol
-- **Balancer Swaps**: Execute token swaps on Balancer pools
-- **Interactive Menu**: User-friendly command-line interface
-- **Balance Tracking**: Automatic balance refreshing and display
-- **Error Handling**: Comprehensive error handling and debugging
+### SushiSwap V3 Liquidity Provider
 
-## Prerequisites
+The liquidity provider functionality is integrated into the main futarchy bot and can be accessed through the CLI menu.
+
+## Requirements
 
 - Python 3.8+
 - Web3.py
-- Private key with access to tokens on Gnosis Chain
-- RPC endpoint for Gnosis Chain
-- XDAI for gas fees (native currency on Gnosis Chain)
+- Eth-account
+- Python-dotenv
+- Other dependencies listed in requirements.txt
 
-## Setup
+## Installation
 
 1. Clone the repository:
 ```bash
@@ -45,72 +57,21 @@ git clone https://github.com/yourusername/futarchy-bots.git
 cd futarchy-bots
 ```
 
-2. Create a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Create a `.env` file with your configuration:
+3. Create a `.env` file with your configuration:
 ```
 PRIVATE_KEY=your_private_key_here
-RPC_URL=https://gnosis-mainnet.public.blastapi.io
+RPC_URL=your_rpc_url_here
 ```
-
-## Usage
-
-### Interactive Menu
-
-Run the interactive menu to access all bot functions:
-
-```bash
-python menu.py
-```
-
-Add the `--verbose` flag for detailed debug information:
-
-```bash
-python menu.py --verbose
-```
-
-### Menu Options
-
-1. **Refresh Balances**: View current token balances (sDAI, waGNO, XDAI)
-2. **Check Permit2 Status**: Check current Permit2 authorizations
-3. **Approve sDAI for Permit2**: Approve sDAI to be used with Permit2
-4. **Create Permit for BatchRouter**: Create a Permit2 authorization for the BatchRouter
-5. **Swap sDAI to waGNO**: Execute a swap from sDAI to waGNO
-6. **Swap waGNO to sDAI**: Execute a swap from waGNO to sDAI
-
-## Permit2 Workflow
-
-1. Approve tokens for Permit2 (one-time setup)
-2. Create a permit for a specific spender (e.g., BatchRouter)
-3. Execute transactions through the spender without additional approvals
-
-## Development
-
-### Adding New Exchange Integrations
-
-1. Create a new directory under `exchanges/`
-2. Implement the necessary handler classes
-3. Update the menu system to include the new functionality
-
-### Configuration
-
-Edit `config/constants.py` to update contract addresses and other constants.
 
 ## License
 
-[MIT License](LICENSE)
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Acknowledgements
+## Disclaimer
 
-- [Uniswap Permit2](https://github.com/Uniswap/permit2)
-- [Balancer Protocol](https://balancer.fi/)
-- [Web3.py](https://web3py.readthedocs.io/)
+This software is provided for educational and research purposes only. Use at your own risk. The authors are not responsible for any financial losses incurred through the use of these tools.

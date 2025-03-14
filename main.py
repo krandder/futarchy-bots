@@ -7,14 +7,14 @@ import sys
 import os
 import argparse
 
-# Add the parent directory to the path to allow importing the package
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Add the current directory to the path
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from futarchy_trading.cli.menu import FutarchyMenu
-from futarchy_trading.core.futarchy_bot import FutarchyBot
-from futarchy_trading.strategies.monitoring import simple_monitoring_strategy
-from futarchy_trading.strategies.probability import probability_threshold_strategy
-from futarchy_trading.strategies.arbitrage import arbitrage_strategy
+from cli.menu import FutarchyMenu
+from core.futarchy_bot import FutarchyBot
+from strategies.monitoring import simple_monitoring_strategy
+from strategies.probability import probability_threshold_strategy
+from strategies.arbitrage import arbitrage_strategy
 
 def parse_args():
     """Parse command line arguments"""
