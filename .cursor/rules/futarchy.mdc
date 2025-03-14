@@ -1,0 +1,12 @@
+---
+description: For all futarchy tasks
+globs: 
+alwaysApply: false
+---
+1. Always try to learn things, even in small steps. Learn from all bugs, and register on the [AI_LEARNINGS.md](mdc:AI_LEARNINGS.md) file.
+
+2. Frequently consult the @AI_LEARNING.md files and write also instructions, goals, and subgoal.
+
+3. If you have a complicated task, try to find a smaller task, call it SUBGOAL, write it in the AI_LEARNING, and try to execute and, and most importantly, VALIDATE that the SUBGOAL is resolved, before moving forward. This will help you move forward without getting struck!
+
+4. Do NOT change high-level strategy in order to solve a problem without explicit authorization from a human. If you have questions regarding what you should do, ask first.

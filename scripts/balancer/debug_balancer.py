@@ -5,35 +5,27 @@ Debug script for Balancer swaps on Gnosis Chain
 
 import os
 import json
+import sys
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 from eth_account import Account
 from dotenv import load_dotenv
 
+# Add the project root to the path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from config.constants import (
+    TOKEN_CONFIG, BALANCER_CONFIG, BALANCER_VAULT_ABI, BALANCER_POOL_ABI, ERC20_ABI
+)
+
 # Load environment variables
 load_dotenv()
 
-# Contract addresses
-WAGNO_ADDRESS = "0x7c16F0185A26Db0AE7a9377f23BC18ea7ce5d644"
-SDAI_ADDRESS = "0xaf204776c7245bF4147c2612BF6e5972Ee483701"
-BALANCER_VAULT_ADDRESS = "0xBA12222222228d8Ba445958a75a0704d566BF2C8"
-BALANCER_POOL_ADDRESS = "0xD1D7Fa8871d84d0E77020fc28B7Cd5718C446522"
-
-# ABI definitions
-ERC20_ABI = [
-    {"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-    {"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
-    {"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
-]
-
-BALANCER_VAULT_ABI = [
-    {"inputs":[{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"address","name":"assetIn","type":"address"},{"internalType":"address","name":"assetOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.SingleSwap","name":"singleSwap","type":"tuple"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"},{"internalType":"uint256","name":"limit","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"name":"swap","outputs":[{"internalType":"uint256","name":"amountCalculated","type":"uint256"}],"stateMutability":"payable","type":"function"},
-    {"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"}],"name":"getPoolTokens","outputs":[{"internalType":"address[]","name":"tokens","type":"address[]"},{"internalType":"uint256[]","name":"balances","type":"uint256[]"},{"internalType":"uint256","name":"lastChangeBlock","type":"uint256"}],"stateMutability":"view","type":"function"}
-]
-
-BALANCER_POOL_ABI = [
-    {"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"}
-]
+# Contract addresses from constants
+WAGNO_ADDRESS = TOKEN_CONFIG["wagno"]["address"]
+SDAI_ADDRESS = TOKEN_CONFIG["currency"]["address"]
+BALANCER_VAULT_ADDRESS = BALANCER_CONFIG["vault_address"]
+BALANCER_POOL_ADDRESS = BALANCER_CONFIG["pool_address"]
 
 def get_raw_transaction(signed_tx):
     """Get raw transaction bytes, compatible with different web3.py versions."""

@@ -4,30 +4,25 @@ Simple script to deposit GNO to waGNO on Gnosis Chain
 """
 
 import os
+import sys
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 from eth_account import Account
 from dotenv import load_dotenv
 
+# Add the project root to the path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from config.constants import (
+    TOKEN_CONFIG, ERC20_ABI, WAGNO_ABI
+)
+
 # Load environment variables
 load_dotenv()
 
-# Contract addresses - will be checksummed in the script
-GNO_ADDRESS = "0x9C58BAcC331c9aa871AFD802DB6379a98e80CEdb"
-WAGNO_ADDRESS = "0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644"
-
-# ERC20 ABI (minimal)
-ERC20_ABI = [
-    {"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-    {"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
-    {"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
-]
-
-# Minimal ERC4626 ABI with deposit function
-WAGNO_ABI = [
-    {"inputs":[{"internalType":"uint256","name":"assets","type":"uint256"},{"internalType":"address","name":"receiver","type":"address"}],"name":"deposit","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},
-    {"inputs":[{"internalType":"address","name":"account","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
-]
+# Contract addresses from constants
+GNO_ADDRESS = TOKEN_CONFIG["company"]["address"]
+WAGNO_ADDRESS = TOKEN_CONFIG["wagno"]["address"]
 
 def get_raw_transaction(signed_tx):
     """Get raw transaction bytes, compatible with different web3.py versions."""

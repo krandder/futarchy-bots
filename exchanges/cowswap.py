@@ -1,11 +1,20 @@
 # Import this at the top of exchanges/cowswap.py
+import os
+import json
+import time
+import requests
+import sys
+
+# Add the project root to the path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import requests
 import time
 import json
 from eth_utils import to_checksum_address
 from eth_account.messages import encode_defunct
-from ..config.constants import COWSWAP_API_URL, CONTRACT_ADDRESSES
-from ..utils.web3_utils import get_raw_transaction
+from config.constants import COWSWAP_API_URL, CONTRACT_ADDRESSES
+from utils.web3_utils import get_raw_transaction
 
 
 class CowSwapExchange:
