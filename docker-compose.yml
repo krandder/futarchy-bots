@@ -1,0 +1,36 @@
+version: '3'
+
+services:
+  # Python application
+  python-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    volumes:
+      - .:/app
+    depends_on:
+      - uniswap-v3-bridge
+    environment:
+      - UNISWAP_V3_BRIDGE_URL=http://uniswap-v3-bridge:3001
+    networks:
+      - futarchy-network
+
+  # Uniswap V3 Bridge
+  uniswap-v3-bridge:
+    build:
+      context: ./js-bridges/uniswap-v3-bridge
+      dockerfile: Dockerfile
+    volumes:
+      - ./js-bridges/uniswap-v3-bridge:/app
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - RPC_URL=${RPC_URL:-https://rpc.gnosischain.com}
+      # Add other environment variables from .env file
+    networks:
+      - futarchy-network
+
+networks:
+  futarchy-network:
+    driver: bridge 
