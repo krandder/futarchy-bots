@@ -101,8 +101,8 @@ print(f"💰 sDAI Balance: {w3.from_wei(sdai_balance, 'ether')}")
 wagno_balance = wagno_token.functions.balanceOf(address).call()
 print(f"💰 WAGNO Balance before swap: {w3.from_wei(wagno_balance, 'ether')}")
 
-# Amount to swap (0.01 sDAI)
-amount_to_swap = w3.to_wei(0.01, 'ether')
+# Amount to swap (0.3904 sDAI)
+amount_to_swap = w3.to_wei(0.3904, 'ether')
 
 if sdai_balance < amount_to_swap:
     print("❌ Insufficient sDAI balance")
@@ -208,6 +208,7 @@ try:
                 'from': address,
                 'nonce': nonce,
                 'gas': gas_limit,
+                'type': '0x2',  # EIP-1559 transaction
                 'maxFeePerGas': max_fee_per_gas,
                 'maxPriorityFeePerGas': max_priority_fee_per_gas,
                 'chainId': w3.eth.chain_id,
@@ -217,7 +218,7 @@ try:
             
             # Sign and send the transaction
             signed_tx = w3.eth.account.sign_transaction(swap_tx, private_key)
-            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)  # Use rawTransaction instead of raw_transaction
             print(f"⏳ Transaction sent: {tx_hash.hex()}")
             
             # Wait for the transaction to complete
@@ -275,14 +276,15 @@ try:
                 'from': address,
                 'nonce': w3.eth.get_transaction_count(address),
                 'gas': 100000,
-                'maxFeePerGas': w3.eth.gas_price,
+                'type': '0x2',  # EIP-1559 transaction
+                'maxFeePerGas': w3.eth.gas_price * 2,
                 'maxPriorityFeePerGas': w3.eth.gas_price,
                 'chainId': w3.eth.chain_id,
             })
             
             # Sign and send the approval transaction
             signed_tx = w3.eth.account.sign_transaction(approve_tx, private_key)
-            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)  # Use rawTransaction instead of raw_transaction
             print(f"⏳ Approval transaction sent: {tx_hash.hex()}")
             
             # Wait for the transaction to complete
@@ -305,6 +307,7 @@ try:
                     'from': address,
                     'nonce': w3.eth.get_transaction_count(address),
                     'gas': 3000000,  # Increased gas limit to 3 million
+                    'type': '0x2',  # EIP-1559 transaction
                     'maxFeePerGas': w3.eth.gas_price * 2,
                     'maxPriorityFeePerGas': w3.eth.gas_price,
                     'chainId': w3.eth.chain_id,
@@ -312,7 +315,7 @@ try:
                 
                 # Sign and send the transaction
                 signed_tx = w3.eth.account.sign_transaction(swap_tx, private_key)
-                tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+                tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)  # Use rawTransaction instead of raw_transaction
                 print(f"⏳ Transaction sent: {tx_hash.hex()}")
                 
                 # Wait for the transaction to complete
