@@ -174,6 +174,10 @@ class AaveBalancerHandler:
             return None
 
     
+    def unwrap_wagno(self, amount):
+        """Alias for unwrap_wagno_to_gno"""
+        return self.unwrap_wagno_to_gno(amount)
+
     def unwrap_wagno_to_gno(self, amount):
         """
         Unwrap waGNO back to GNO.
@@ -188,10 +192,16 @@ class AaveBalancerHandler:
             # Convert amount to wei
             amount_wei = self.w3.to_wei(amount, 'ether')
             
-            # Check waGNO balance
+            # Check waGNO balance with detailed output
             wagno_balance = self.wagno_token.functions.balanceOf(self.address).call()
+            print("\nCurrent Balances:")
+            print(f"waGNO: {self.w3.from_wei(wagno_balance, 'ether')} ({wagno_balance} wei)")
+            print(f"Amount to unwrap: {amount} waGNO ({amount_wei} wei)\n")
+            
             if wagno_balance < amount_wei:
-                print(f"❌ Insufficient waGNO balance. Required: {amount}, Available: {self.w3.from_wei(wagno_balance, 'ether')}")
+                print(f"❌ Insufficient waGNO balance")
+                print(f"   Required: {amount} waGNO")
+                print(f"   Available: {self.w3.from_wei(wagno_balance, 'ether')} waGNO")
                 return None
             
             print(f"Unwrapping {amount} waGNO to GNO...")
@@ -201,14 +211,13 @@ class AaveBalancerHandler:
                 gas_estimate = self.wagno_token.functions.redeem(
                     amount_wei, self.address, self.address
                 ).estimate_gas({'from': self.address})
-                print(f"DEBUG: Gas estimate for redeem: {gas_estimate}")
+                print(f"✅ Gas estimation successful: {gas_estimate}")
             except Exception as gas_error:
                 print(f"⚠️ WARNING: Gas estimation failed: {gas_error}")
                 print("   This usually indicates the transaction will fail, but proceeding anyway...")
                 gas_estimate = 500000  # Default high gas limit
             
             # Redeem waGNO to get GNO back
-            # Simplified redeem call with just the three needed parameters
             redeem_tx = self.wagno_token.functions.redeem(
                 amount_wei,
                 self.address,  # receiver
@@ -225,23 +234,33 @@ class AaveBalancerHandler:
             signed_tx = self.w3.eth.account.sign_transaction(redeem_tx, self.account.key)
             tx_hash = self.w3.eth.send_raw_transaction(get_raw_transaction(signed_tx))
             
-            print(f"⏳ Unwrapping transaction sent: {tx_hash.hex()}")
+            print(f"\n⏳ Unwrapping transaction sent: {tx_hash.hex()}")
+            print(f"Transaction: https://gnosisscan.io/tx/{tx_hash.hex()}")
             
             # Wait for transaction confirmation
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
             
             if receipt['status'] == 1:
-                print(f"✅ Successfully unwrapped {amount} waGNO to GNO!")
+                # Get new balances
+                new_wagno_balance = self.wagno_token.functions.balanceOf(self.address).call()
+                gno_token = self.bot.get_token_contract(TOKEN_CONFIG["company"]["address"])
+                new_gno_balance = gno_token.functions.balanceOf(self.address).call()
+                
+                print(f"\n✅ Successfully unwrapped {amount} waGNO to GNO!")
+                print(f"New balances:")
+                print(f"waGNO: {self.w3.from_wei(new_wagno_balance, 'ether')} ({new_wagno_balance} wei)")
+                print(f"GNO: {self.w3.from_wei(new_gno_balance, 'ether')} ({new_gno_balance} wei)")
+                
+                # Calculate and display changes
+                wagno_change = new_wagno_balance - wagno_balance
+                print(f"\nBalance Changes:")
+                print(f"waGNO: {self.w3.from_wei(wagno_change, 'ether'):+.18f}")
+                print(f"GNO: {self.w3.from_wei(amount_wei, 'ether'):+.18f}")
+                
                 return tx_hash.hex()
             else:
                 print("❌ Unwrapping transaction failed!")
-                # Try to get error details
-                try:
-                    trace_node = f"https://blockscout.com/xdai/mainnet/api?module=transaction&action=gettxinfo&txhash={tx_hash.hex()}"
-                    print(f"Check transaction details at: {trace_node}")
-                    print(f"Transaction: https://gnosisscan.io/tx/{tx_hash.hex()}")
-                except Exception as trace_error:
-                    print(f"Error getting transaction trace: {trace_error}")
+                print(f"Check transaction details at: https://blockscout.com/xdai/mainnet/tx/{tx_hash.hex()}")
                 return None
                 
         except Exception as e:
