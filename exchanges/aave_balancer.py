@@ -66,13 +66,7 @@ class AaveBalancerHandler:
             abi=BALANCER_POOL_ABI
         )
         
-        # Get the pool ID from the pool contract
-        try:
-            self.pool_id = self.balancer_pool.functions.getPoolId().call()
-            print(f"Retrieved Balancer pool ID: {self.pool_id.hex()}")
-        except Exception as e:
-            print(f"Warning: Could not retrieve pool ID: {e}")
-            # pool_id already has a fallback value from __init__
+        # pool_id is already set in __init__
 
 
 
