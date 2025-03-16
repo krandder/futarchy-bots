@@ -181,12 +181,56 @@ class FutarchyBot(BaseBot):
             print(f"❌ Error calculating YES token price ratio: {e}")
             return 0.5  # Default to 50% if calculation fails
     
+    def get_sdai_yes_probability(self):
+        """
+        Calculate the probability based on the sDAI-YES/sDAI pool price.
+        This is more accurate than using the GNO YES/NO pools for probability.
+        
+        Returns:
+            float: Probability between 0 and 1
+        """
+        try:
+            # Get the pool contract
+            pool_address = CONTRACT_ADDRESSES["sdaiYesPool"]
+            pool = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(pool_address),
+                abi=UNISWAP_V3_POOL_ABI
+            )
+            
+            # Get current price from slot0
+            slot0 = pool.functions.slot0().call()
+            sqrt_price_x96 = int(slot0[0])
+            
+            # Calculate raw price from sqrtPriceX96
+            raw_price = (sqrt_price_x96 ** 2) / (2 ** 192)
+            
+            # Get token order to determine if we need to invert
+            token0 = pool.functions.token0().call().lower()
+            sdai_yes_address = TOKEN_CONFIG["currency"]["yes_address"].lower()
+            
+            # If sDAI-YES is token0, we need to invert the price
+            probability = 1 / raw_price if sdai_yes_address == token0 else raw_price
+            
+            # Ensure the probability is between 0 and 1
+            probability = max(0, min(1, probability))
+            
+            return probability
+            
+        except Exception as e:
+            print(f"❌ Error calculating sDAI-YES probability: {e}")
+            return None
+    
     def get_market_prices(self):
         """
         Get market prices and probabilities.
         
         Returns:
-            dict: Market price information
+            dict: Market price information including:
+                - yes_company_price: Price of GNO YES tokens in terms of sDAI YES
+                - no_company_price: Price of GNO NO tokens in terms of sDAI NO
+                - gno_spot_price: Current market price of GNO in sDAI
+                - event_probability: Probability of the event occurring (from sDAI-YES/sDAI price)
+                - synthetic_spot_price: Synthetic GNO price calculated from YES/NO prices and probability
         """
         try:
             # Get slot0 data from pools
@@ -207,18 +251,26 @@ class FutarchyBot(BaseBot):
             # Try to get GNO/SDAI price from CowSwap
             gno_spot_price = self.get_gno_sdai_price()
             
-            # Get YES token price ratio as probability directly
+            # Get probability from sDAI-YES/sDAI pool
             try:
-                event_probability = self.get_yes_token_price_ratio()
+                event_probability = self.get_sdai_yes_probability()
+                if event_probability is None:
+                    # Fallback to old method if new method fails
+                    event_probability = self.get_yes_token_price_ratio()
             except Exception as prob_err:
                 print(f"❌ Error calculating event probability: {prob_err}")
                 event_probability = 0.5  # Default to 50% as fallback
             
+            # Calculate synthetic spot price
+            # synthetic_price = yes_price * probability + no_price * (1 - probability)
+            synthetic_spot_price = (yes_company_price * event_probability) + (no_company_price * (1 - event_probability))
+            
             return {
                 "yes_company_price": yes_company_price,
                 "no_company_price": no_company_price,
-                "gno_spot_price": gno_spot_price,  # GNO price in SDAI
-                "event_probability": event_probability
+                "gno_spot_price": gno_spot_price,  # GNO price in sDAI
+                "event_probability": event_probability,
+                "synthetic_spot_price": synthetic_spot_price
             }
         except Exception as e:
             print(f"❌ Error getting market prices: {e}")
@@ -294,10 +346,29 @@ class FutarchyBot(BaseBot):
                 return
         
         print("\n=== Market Prices & Probability ===")
-        print(f"YES GNO Price: {prices['yes_company_price']:.6f}")
-        print(f"NO GNO Price: {prices['no_company_price']:.6f}")
-        print(f"GNO Spot Price (SDAI): {prices['gno_spot_price']:.6f}")
+        print(f"YES GNO Price: {prices['yes_company_price']:.6f} sDAI")
+        print(f"NO GNO Price: {prices['no_company_price']:.6f} sDAI")
+        print(f"GNO Spot Price (sDAI): {prices['gno_spot_price']:.6f}")
         print(f"Event Probability: {prices['event_probability']:.2%}")
+        
+        # Print synthetic price with calculation explanation
+        print("\n=== Synthetic Price Calculation ===")
+        print(f"Synthetic GNO Price: {prices['synthetic_spot_price']:.6f} sDAI")
+        print(f"Formula: (YES_price * probability) + (NO_price * (1 - probability))")
+        print(f"       = ({prices['yes_company_price']:.6f} * {prices['event_probability']:.4f}) + ({prices['no_company_price']:.6f} * {1 - prices['event_probability']:.4f})")
+        print(f"       = {prices['yes_company_price'] * prices['event_probability']:.6f} + {prices['no_company_price'] * (1 - prices['event_probability']):.6f}")
+        print(f"       = {prices['synthetic_spot_price']:.6f} sDAI")
+        
+        # Calculate and show potential arbitrage
+        if prices['gno_spot_price'] > 0:  # Avoid division by zero
+            price_difference = ((prices['synthetic_spot_price'] / prices['gno_spot_price']) - 1) * 100
+            print(f"\nArbitrage Opportunity:")
+            print(f"Price Difference: {price_difference:+.2f}% (synthetic vs spot)")
+            if abs(price_difference) > 2:  # Only show suggestion if difference is significant
+                if price_difference > 0:
+                    print("Suggestion: Buy GNO at spot price, sell synthetically through YES/NO tokens")
+                else:
+                    print("Suggestion: Buy synthetic exposure through YES/NO tokens, sell GNO at spot price")
     
     def add_collateral(self, token_type, amount):
         """

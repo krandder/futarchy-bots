@@ -28,6 +28,7 @@ CONTRACT_ADDRESSES = {
     "balancerPool": "0xd1d7fa8871d84d0e77020fc28b7cd5718c446522",
     "wagno": "0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644",
     "sushiswapNFPM": "0xaB235da7f52d35fb4551AfBa11BFB56e18774A65",  # SushiSwap V3 NonFungiblePositionManager
+    "sdaiYesPool": "0xC7405C82cFc9A652a469fAf21B7FE88D6E7d675c",  # SushiSwap V3 YES_sDAI/sDAI pool
 }
 
 # Pool configurations

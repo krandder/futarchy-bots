@@ -7,6 +7,20 @@ import sys
 import os
 import argparse
 from decimal import Decimal
+import time
+import json
+from web3 import Web3
+from dotenv import load_dotenv
+from exchanges.sushiswap import SushiSwapExchange
+from config.constants import (
+    CONTRACT_ADDRESSES,
+    TOKEN_CONFIG,
+    POOL_CONFIG_YES,
+    POOL_CONFIG_NO,
+    BALANCER_CONFIG,
+    DEFAULT_SWAP_CONFIG,
+    DEFAULT_PERMIT_CONFIG
+)
 
 # Add the current directory to the path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
@@ -15,7 +29,6 @@ from core.futarchy_bot import FutarchyBot
 from strategies.monitoring import simple_monitoring_strategy
 from strategies.probability import probability_threshold_strategy
 from strategies.arbitrage import arbitrage_strategy
-from config.constants import TOKEN_CONFIG, BALANCER_CONFIG
 
 def parse_args():
     """Parse command line arguments"""
@@ -51,12 +64,12 @@ def parse_args():
     balances_parser = subparsers.add_parser('balances', help='Show token balances')
     refresh_balances_parser = subparsers.add_parser('refresh_balances', help='Refresh and show token balances')
     
-    # Swap commands
-    swap_sdai_parser = subparsers.add_parser('swap_sdai', help='Swap sDAI to waGNO')
-    swap_sdai_parser.add_argument('amount', type=float, help='Amount of sDAI to swap')
+    # Buy GNO commands
+    buy_wrapped_gno_parser = subparsers.add_parser('buy_wrapped_gno', help='Buy waGNO with sDAI')
+    buy_wrapped_gno_parser.add_argument('amount', type=float, help='Amount of sDAI to spend')
     
-    swap_wagno_parser = subparsers.add_parser('swap_wagno', help='Swap waGNO to sDAI')
-    swap_wagno_parser.add_argument('amount', type=float, help='Amount of waGNO to swap')
+    buy_gno_parser = subparsers.add_parser('buy_gno', help='Buy GNO with sDAI (buys waGNO and unwraps it)')
+    buy_gno_parser.add_argument('amount', type=float, help='Amount of sDAI to spend')
     
     unwrap_wagno_parser = subparsers.add_parser('unwrap_wagno', help='Unwrap waGNO to GNO')
     unwrap_wagno_parser.add_argument('amount', type=float, help='Amount of waGNO to unwrap')
@@ -73,6 +86,10 @@ def parse_args():
     # Add merge_sdai command
     merge_sdai_parser = subparsers.add_parser('merge_sdai', help='Merge sDAI-YES and sDAI-NO back into sDAI')
     merge_sdai_parser.add_argument('amount', type=float, help='Amount of sDAI-YES and sDAI-NO to merge')
+    
+    # Add sell_sdai_yes command
+    sell_sdai_yes_parser = subparsers.add_parser('sell_sdai_yes', help='Sell sDAI-YES tokens for sDAI')
+    sell_sdai_yes_parser.add_argument('amount', type=float, help='Amount of sDAI-YES to sell')
     
     # Add debug command
     debug_parser = subparsers.add_parser('debug', help='Run in debug mode with additional output')
@@ -137,22 +154,18 @@ def main():
         bot.run_strategy(lambda b: simple_monitoring_strategy(b, args.iterations, args.interval))
     
     elif args.command == 'prices':
-        # Just show market prices without executing any strategy
+        # Show market prices using the bot's print_market_prices method
         prices = bot.get_market_prices()
         if prices:
-            print("\n=== Market Prices & Probability ===")
-            print(f"YES GNO Price: {prices['yes_company_price']:.6f}")
-            print(f"NO GNO Price: {prices['no_company_price']:.6f}")
-            print(f"GNO Spot Price (SDAI): {prices['gno_spot_price']:.6f}")
-            print(f"Event Probability: {prices['event_probability']:.2%}")
+            bot.print_market_prices(prices)
         return
     
     elif args.command == 'arbitrage':
         print(f"Running arbitrage strategy (min diff: {args.diff}, amount: {args.amount})")
         bot.run_strategy(lambda b: arbitrage_strategy(b, args.diff, args.amount))
     
-    elif args.command == 'swap_sdai':
-        # Swap sDAI to waGNO using Balancer BatchRouter
+    elif args.command == 'buy_wrapped_gno':
+        # Buy waGNO with sDAI using Balancer BatchRouter
         from exchanges.balancer.swap import BalancerSwapHandler
         try:
             balancer = BalancerSwapHandler(bot)
@@ -167,20 +180,36 @@ def main():
             print(f"❌ Error during swap: {e}")
             sys.exit(1)
     
-    elif args.command == 'swap_wagno':
-        # Swap waGNO to sDAI using Balancer BatchRouter
+    elif args.command == 'buy_gno':
+        # Buy waGNO and automatically unwrap it to GNO
         from exchanges.balancer.swap import BalancerSwapHandler
         try:
+            print(f"\n🔄 Buying and unwrapping GNO using {args.amount} sDAI...")
+            
+            # Step 1: Buy waGNO
             balancer = BalancerSwapHandler(bot)
-            result = balancer.swap_wagno_to_sdai(args.amount)
-            if result and result.get('success'):
-                print("\nTransaction Summary:")
-                print(f"Transaction Hash: {result['tx_hash']}")
-                print("\nBalance Changes:")
-                print(f"waGNO: {result['balance_changes']['token_in']:+.18f}")
-                print(f"sDAI: {result['balance_changes']['token_out']:+.18f}")
+            result = balancer.swap_sdai_to_wagno(args.amount)
+            if not result or not result.get('success'):
+                print("❌ Failed to buy waGNO")
+                sys.exit(1)
+                
+            wagno_received = result['balance_changes']['token_out']
+            print(f"\n✅ Successfully bought {wagno_received:.18f} waGNO")
+            
+            # Step 2: Unwrap waGNO to GNO
+            print(f"\n🔄 Unwrapping {wagno_received:.18f} waGNO to GNO...")
+            success = bot.aave_balancer.unwrap_wagno(wagno_received)
+            
+            if success:
+                print("✅ Successfully unwrapped waGNO to GNO")
+                balances = bot.get_balances()
+                bot.print_balances(balances)
+            else:
+                print("❌ Failed to unwrap waGNO")
+                sys.exit(1)
+                
         except Exception as e:
-            print(f"❌ Error during swap: {e}")
+            print(f"❌ Error during buy_gno operation: {e}")
             sys.exit(1)
     
     elif args.command == 'unwrap_wagno':
@@ -216,10 +245,57 @@ def main():
             balances = bot.get_balances()
             bot.print_balances(balances)
     
+    elif args.command == 'sell_sdai_yes':
+        sell_sdai_yes(bot, args.amount)
+    
     else:
         # Default to showing help
         print("Please specify a command. Use --help for available commands.")
         sys.exit(1)
+
+def sell_sdai_yes(bot, amount):
+    """
+    Sell sDAI-YES tokens for sDAI using SushiSwap V3.
+    
+    Args:
+        bot: FutarchyBot instance
+        amount: Amount of sDAI-YES to sell
+    """
+    print(f"\n🔄 Selling {amount} sDAI-YES for sDAI...")
+    
+    # Convert amount to wei
+    amount_wei = bot.w3.to_wei(amount, 'ether')
+    
+    # Get token addresses
+    sdai_yes_address = TOKEN_CONFIG["currency"]["yes_address"]
+    sdai_address = TOKEN_CONFIG["currency"]["address"]
+    pool_address = CONTRACT_ADDRESSES["sdaiYesPool"]
+    
+    # Initialize SushiSwap exchange
+    sushiswap = SushiSwapExchange(bot)
+    
+    # Get pool info to determine token order
+    pool_info = sushiswap.get_pool_info(pool_address)
+    token0 = pool_info['token0'].lower()
+    
+    # Determine if we're swapping token0 for token1 or vice versa
+    zero_for_one = sdai_yes_address.lower() == token0
+    
+    # Execute the swap
+    success = sushiswap.swap(
+        pool_address=pool_address,
+        token_in=sdai_yes_address,
+        token_out=sdai_address,
+        amount=amount_wei,
+        zero_for_one=zero_for_one
+    )
+    
+    if success:
+        print("✅ Swap completed successfully!")
+        # Refresh balances to show the result
+        show_balances(bot)
+    else:
+        print("❌ Swap failed!")
 
 if __name__ == "__main__":
     main()
