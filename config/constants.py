@@ -6,7 +6,10 @@ COWSWAP_API_URL = "https://api.cow.fi/xdai"  # Gnosis Chain (Production)
 # Contract addresses
 CONTRACT_ADDRESSES = {
     "futarchyRouter": "0x7495a583ba85875d59407781b4958ED6e0E1228f",
-    "sushiswap": "0x592abc3734cd0d458e6e44a2db2992a3d00283a4",
+    # WARNING: NEVER USE THIS ROUTER ADDRESS: 0x592abc3734cd0d458e6e44a2db2992a3d00283a4
+    # This SushiSwap V3 Passthrough Router has a critical flaw where tokens get permanently stuck 
+    # if a swap fails. We lost funds to this issue. Use a different router implementation.
+    "sushiswap": None,  # TODO: Replace with a secure router implementation
     "market": "0x6242AbA055957A63d682e9D3de3364ACB53D053A",
     "conditionalTokens": "0xCeAfDD6bc0bEF976fdCd1112955828E00543c0Ce",
     "wrapperService": "0xc14f5d2B9d6945EF1BA93f8dB20294b90FA5b5b1",
