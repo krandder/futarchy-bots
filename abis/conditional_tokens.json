@@ -1,0 +1,28 @@
+[
+    {
+        "constant": false,
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "partition", "type": "uint256"},
+            {"name": "amount", "type": "uint256"}
+        ],
+        "name": "splitPosition",
+        "outputs": [],
+        "type": "function"
+    },
+    {
+        "constant": false,
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "partition", "type": "uint256"},
+            {"name": "amount", "type": "uint256"}
+        ],
+        "name": "mergePositions",
+        "outputs": [],
+        "type": "function"
+    }
+] 

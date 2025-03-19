@@ -1,26 +1,60 @@
 [
     {
         "inputs": [
-            {"name": "owner", "type": "address"},
+            {
+                "internalType": "address",
+                "name": "owner",
+                "type": "address"
+            },
             {
                 "components": [
                     {
                         "components": [
-                            {"name": "token", "type": "address"},
-                            {"name": "amount", "type": "uint160"},
-                            {"name": "expiration", "type": "uint48"},
-                            {"name": "nonce", "type": "uint48"}
+                            {
+                                "internalType": "address",
+                                "name": "token",
+                                "type": "address"
+                            },
+                            {
+                                "internalType": "uint160",
+                                "name": "amount",
+                                "type": "uint160"
+                            },
+                            {
+                                "internalType": "uint48",
+                                "name": "expiration",
+                                "type": "uint48"
+                            },
+                            {
+                                "internalType": "uint48",
+                                "name": "nonce",
+                                "type": "uint48"
+                            }
                         ],
+                        "internalType": "struct IAllowanceTransfer.PermitDetails",
                         "name": "details",
                         "type": "tuple"
                     },
-                    {"name": "spender", "type": "address"},
-                    {"name": "sigDeadline", "type": "uint256"}
+                    {
+                        "internalType": "address",
+                        "name": "spender",
+                        "type": "address"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "sigDeadline",
+                        "type": "uint256"
+                    }
                 ],
+                "internalType": "struct IAllowanceTransfer.PermitSingle",
                 "name": "permitSingle",
                 "type": "tuple"
             },
-            {"name": "signature", "type": "bytes"}
+            {
+                "internalType": "bytes",
+                "name": "signature",
+                "type": "bytes"
+            }
         ],
         "name": "permit",
         "outputs": [],

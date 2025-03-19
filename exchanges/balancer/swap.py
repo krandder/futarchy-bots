@@ -3,387 +3,293 @@ Balancer swap handler for executing swaps on Balancer pools.
 This module provides functionality to execute swaps on Balancer with automatic Permit2 handling.
 """
 
-from web3 import Web3
 import os
 import json
 from pathlib import Path
+from web3 import Web3
+import time
+
+from config.constants import (
+    CONTRACT_ADDRESSES, TOKEN_CONFIG, BALANCER_CONFIG,
+    BALANCER_VAULT_ABI, BALANCER_POOL_ABI, BALANCER_BATCH_ROUTER_ABI,
+    PERMIT2_ABI, ERC20_ABI
+)
 from .permit2 import BalancerPermit2Handler
-from config.constants import BALANCER_CONFIG, TOKEN_CONFIG, CONTRACT_ADDRESSES
 
 class BalancerSwapHandler:
     """Handler for Balancer swap operations."""
     
-    def __init__(self, bot, verbose=False):
+    def __init__(self, bot):
         """
         Initialize the Balancer swap handler.
         
         Args:
             bot: FutarchyBot instance with web3 connection and account
-            verbose: Whether to print verbose debug information
         """
         self.bot = bot
         self.w3 = bot.w3
         self.account = bot.account
         self.address = bot.address
-        self.verbose = verbose
+        self.verbose = bot.verbose
         
-        # Get Balancer addresses from constants
-        self.balancer_vault_address = self.w3.to_checksum_address(
-            os.environ.get('BALANCER_VAULT_ADDRESS', BALANCER_CONFIG["vault_address"])
+        # Initialize contracts
+        self.batch_router = self.w3.eth.contract(
+            address=self.w3.to_checksum_address(CONTRACT_ADDRESSES["batchRouter"]),
+            abi=BALANCER_BATCH_ROUTER_ABI
         )
-        self.balancer_pool_address = self.w3.to_checksum_address(
-            os.environ.get('BALANCER_POOL_ADDRESS', BALANCER_CONFIG["pool_address"])
-        )
-        
-        # Get BatchRouter address from constants
-        self.batch_router_address = self.w3.to_checksum_address(
-            os.environ.get('BATCH_ROUTER_ADDRESS', CONTRACT_ADDRESSES["batchRouter"])
+        self.permit2 = self.w3.eth.contract(
+            address=self.w3.to_checksum_address(CONTRACT_ADDRESSES["permit2"]),
+            abi=PERMIT2_ABI
         )
         
-        # Initialize Permit2 handler
-        self.permit2_handler = BalancerPermit2Handler(bot, verbose)
-        
-        # Initialize Balancer contracts
-        self.init_contracts()
-        
+        # Initialize pool ID directly from constants
+        self.pool_id = BALANCER_CONFIG["pool_id"]
         if self.verbose:
-            print(f"Initialized Balancer swap handler with vault: {self.balancer_vault_address}")
-            print(f"Pool address: {self.balancer_pool_address}")
-            print(f"BatchRouter address: {self.batch_router_address}")
+            print(f"Using pool ID: {self.pool_id}")
+        
+        # Initialize contracts
+        self.init_contracts()
     
     def init_contracts(self):
-        """Initialize Balancer contract instances."""
-        # Balancer Vault ABI (minimal for swaps)
-        self.balancer_vault_abi = [
-            {
-                "inputs": [
-                    {
-                        "internalType": "bytes32",
-                        "name": "poolId",
-                        "type": "bytes32"
-                    }
-                ],
-                "name": "getPoolTokens",
-                "outputs": [
-                    {
-                        "internalType": "address[]",
-                        "name": "tokens",
-                        "type": "address[]"
-                    },
-                    {
-                        "internalType": "uint256[]",
-                        "name": "balances",
-                        "type": "uint256[]"
-                    },
-                    {
-                        "internalType": "uint256",
-                        "name": "lastChangeBlock",
-                        "type": "uint256"
-                    }
-                ],
-                "stateMutability": "view",
-                "type": "function"
-            }
-        ]
-        
-        # Initialize Balancer Vault contract
-        self.balancer_vault = self.w3.eth.contract(
-            address=self.balancer_vault_address,
-            abi=self.balancer_vault_abi
-        )
-        
-        # Load BatchRouter ABI from file
-        reference_path = Path(__file__).parent.parent.parent / ".reference" / "balancer_router.abi.json"
-        if reference_path.exists():
-            with open(reference_path, 'r') as f:
-                self.batch_router_abi = json.load(f)
-        else:
-            raise FileNotFoundError(f"BatchRouter ABI file not found at {reference_path}")
-        
-        # Initialize BatchRouter contract
-        self.batch_router = self.w3.eth.contract(
-            address=self.batch_router_address,
-            abi=self.batch_router_abi
-        )
-        
-        # Get the pool ID from the pool contract
+        """Initialize contract instances."""
         try:
-            # Balancer Pool ABI (minimal for getting pool ID)
-            self.balancer_pool_abi = [
-                {
-                    "inputs": [],
-                    "name": "getPoolId",
-                    "outputs": [
-                        {
-                            "internalType": "bytes32",
-                            "name": "",
-                            "type": "bytes32"
-                        }
-                    ],
-                    "stateMutability": "view",
-                    "type": "function"
-                }
-            ]
-            
-            self.balancer_pool = self.w3.eth.contract(
-                address=self.balancer_pool_address,
-                abi=self.balancer_pool_abi
+            # Initialize Balancer Vault contract
+            self.balancer_vault = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(BALANCER_CONFIG["vault_address"]),
+                abi=BALANCER_VAULT_ABI
             )
             
-            self.pool_id = self.balancer_pool.functions.getPoolId().call()
+            # Initialize Balancer Pool contract
+            self.balancer_pool = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(BALANCER_CONFIG["pool_address"]),
+                abi=BALANCER_POOL_ABI
+            )
+            
             if self.verbose:
-                print(f"Retrieved Balancer pool ID: {self.pool_id.hex()}")
+                print("✅ Contracts initialized successfully")
+                
         except Exception as e:
-            print(f"Warning: Could not retrieve pool ID: {e}")
-            # Use a fallback pool ID if needed
-            self.pool_id = bytes.fromhex(BALANCER_CONFIG["pool_id"][2:])
-            print(f"Using fallback pool ID: {self.pool_id.hex()}")
+            print(f"❌ Error initializing contracts: {e}")
     
-    def get_pool_tokens(self):
-        """
-        Get the tokens in the Balancer pool.
-        
-        Returns:
-            tuple: (token_addresses, token_balances)
-        """
-        try:
-            tokens, balances, _ = self.balancer_vault.functions.getPoolTokens(self.pool_id).call()
-            return tokens, balances
-        except Exception as e:
-            print(f"❌ Error getting pool tokens: {e}")
-            return [], []
+    def _get_raw_transaction(self, signed_tx):
+        """Get raw transaction bytes from signed transaction"""
+        return signed_tx.rawTransaction if hasattr(signed_tx, 'rawTransaction') else signed_tx.raw_transaction
     
-    def swap(self, token_in, token_out, amount_in, min_amount_out=None, auto_permit=True):
-        """
-        Execute a swap on Balancer using the BatchRouter.
-        
-        Args:
-            token_in: Address of the token to swap from
-            token_out: Address of the token to swap to
-            amount_in: Amount to swap (in ether units)
-            min_amount_out: Minimum amount to receive (in ether units, optional)
-            auto_permit: Whether to automatically handle Permit2 authorization
-            
-        Returns:
-            dict: Swap result information
-        """
+    def _get_token_symbol(self, token_contract):
+        """Get token symbol safely"""
         try:
-            # Convert addresses to checksummed form
-            token_in_cs = self.w3.to_checksum_address(token_in)
-            token_out_cs = self.w3.to_checksum_address(token_out)
-            
-            if self.verbose:
-                print(f"Token in: {token_in_cs}")
-                print(f"Token out: {token_out_cs}")
-            
-            # Convert amount to wei
-            amount_in_wei = self.w3.to_wei(amount_in, 'ether')
-            
-            if self.verbose:
-                print(f"Amount in wei: {amount_in_wei}")
-            
-            # Check token balance
-            token_in_contract = self.bot.get_token_contract(token_in_cs)
-            token_in_balance = token_in_contract.functions.balanceOf(self.address).call()
-            
-            if token_in_balance < amount_in_wei:
-                print(f"❌ Insufficient balance. Required: {amount_in}, Available: {self.w3.from_wei(token_in_balance, 'ether')}")
-                return {"success": False, "error": "Insufficient balance"}
-            
-            # Handle Permit2 if needed
-            if auto_permit:
-                # Check if we need a permit for BatchRouter
-                permit_status = self.permit2_handler.check_permit(token_in_cs, self.batch_router_address, amount_in)
-                
-                if permit_status["needs_permit"]:
-                    print("Creating Permit2 authorization for BatchRouter...")
-                    permit_success = self.permit2_handler.ensure_permit(token_in_cs, self.batch_router_address, amount_in)
-                    
-                    if not permit_success:
-                        print("❌ Failed to create Permit2 authorization")
-                        return {"success": False, "error": "Permit2 authorization failed"}
-            
-            # Define swap parameters for BatchRouter
-            paths = [
-                {
-                    "tokenIn": token_in_cs,
-                    "steps": [
-                        {
-                            "pool": self.balancer_pool_address,
-                            "tokenOut": token_out_cs,
-                            "isBuffer": False
-                        }
-                    ],
-                    "exactAmountIn": amount_in_wei,
-                    "minAmountOut": 0  # Will be updated after query
-                }
-            ]
-            
-            # Query expected output
-            print("Querying expected swap output...")
-            try:
-                expected_output = self.batch_router.functions.querySwapExactIn(
-                    paths,
-                    self.address,
-                    '0x'  # empty user data
-                ).call()
-                
-                if self.verbose:
-                    print(f"Expected output: {expected_output}")
-                
-                if expected_output and expected_output[0]:
-                    expected_amount = expected_output[0][0]
-                    print(f"Expected output: {self.w3.from_wei(expected_amount, 'ether')} tokens")
-                    
-                    # Calculate min amount out if not provided
-                    if min_amount_out is None:
-                        min_amount_out = amount_in * 0.9  # 10% slippage
-                        print(f"Using default minimum amount out: {min_amount_out} (with 10% slippage)")
-                    
-                    min_amount_out_wei = self.w3.to_wei(min_amount_out, 'ether')
-                    
-                    # Ensure min_amount_out is not higher than expected output
-                    if min_amount_out_wei > expected_amount:
-                        min_amount_out_wei = int(expected_amount * 0.9)  # 10% below expected
-                        print(f"Adjusted min amount out to 90% of expected: {self.w3.from_wei(min_amount_out_wei, 'ether')}")
-                    
-                    # Update minAmountOut in paths
-                    paths[0]["minAmountOut"] = min_amount_out_wei
-                else:
-                    print("Warning: Could not determine expected output")
-                    # Set a very low minAmountOut
-                    min_amount_out_wei = 1
-                    paths[0]["minAmountOut"] = min_amount_out_wei
-            except Exception as e:
-                print(f"Error during query: {e}")
-                # Set a very low minAmountOut
-                min_amount_out_wei = 1
-                paths[0]["minAmountOut"] = min_amount_out_wei
-            
-            if self.verbose:
-                print(f"Min amount out wei: {min_amount_out_wei}")
-            
-            print(f"Swapping {amount_in} tokens for at least {self.w3.from_wei(min_amount_out_wei, 'ether')} tokens on Balancer...")
-            
-            # Set deadline to 10 minutes from now
-            deadline = self.w3.eth.get_block('latest')['timestamp'] + 600
-            wethIsEth = False  # Not using ETH directly
-            userData = b""  # no additional data
-            
-            # Try to estimate gas first
-            try:
-                gas_estimate = self.batch_router.functions.swapExactIn(
-                    paths,
-                    deadline,
-                    wethIsEth,
-                    userData
-                ).estimate_gas({
-                    'from': self.address,
-                    'value': 0
-                })
-                
-                if self.verbose:
-                    print(f"Estimated gas: {gas_estimate}")
-                    
-            except Exception as gas_error:
-                print(f"❌ Gas estimation failed: {gas_error}")
-                print("This usually indicates the transaction will fail, but proceeding anyway...")
-                gas_estimate = 1000000  # Default value
-            
-            # Build the swap transaction
-            swap_tx = self.batch_router.functions.swapExactIn(
-                paths,
-                deadline,
-                wethIsEth,
-                userData
+            return token_contract.functions.symbol().call()
+        except:
+            return token_contract.address[:8] + "..."
+    
+    def _print_balances(self, token_in, token_out, prefix=""):
+        """Print current balances for given tokens"""
+        token_in_contract = self.w3.eth.contract(address=token_in, abi=ERC20_ABI)
+        token_out_contract = self.w3.eth.contract(address=token_out, abi=ERC20_ABI)
+        
+        balance_in = token_in_contract.functions.balanceOf(self.address).call()
+        balance_out = token_out_contract.functions.balanceOf(self.address).call()
+        
+        token_in_symbol = self._get_token_symbol(token_in_contract)
+        token_out_symbol = self._get_token_symbol(token_out_contract)
+        
+        print(f"{prefix}Balances:")
+        print(f"  {token_in_symbol}: {self.w3.from_wei(balance_in, 'ether')} ({balance_in} wei)")
+        print(f"  {token_out_symbol}: {self.w3.from_wei(balance_out, 'ether')} ({balance_out} wei)")
+        
+        return balance_in, balance_out
+    
+    def _ensure_permit2_approval(self, token, amount):
+        """Ensure token is approved for Permit2"""
+        token_contract = self.w3.eth.contract(address=token, abi=ERC20_ABI)
+        permit2_allowance = token_contract.functions.allowance(
+            self.address,
+            CONTRACT_ADDRESSES["permit2"]
+        ).call()
+        
+        if permit2_allowance < amount:
+            print(f"Approving {token_contract.functions.symbol().call()} for Permit2...")
+            approve_tx = token_contract.functions.approve(
+                CONTRACT_ADDRESSES["permit2"],
+                2**256 - 1  # Max approval
             ).build_transaction({
                 'from': self.address,
                 'nonce': self.w3.eth.get_transaction_count(self.address),
-                'gas': int(gas_estimate * 1.2) if gas_estimate != 1000000 else 1000000,  # Add 20% buffer if estimated
+                'gas': 100000,
                 'gasPrice': self.w3.eth.gas_price,
-                'value': 0,
                 'chainId': self.w3.eth.chain_id
             })
             
-            # Sign and send transaction
-            signed_tx = self.w3.eth.account.sign_transaction(swap_tx, self.account.key)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-            tx_hash_hex = tx_hash.hex()
-            
-            print(f"⏳ Swap transaction sent: {tx_hash_hex}")
-            print(f"View on block explorer: https://gnosisscan.io/tx/{tx_hash_hex}")
-            
-            # Wait for transaction confirmation
-            print("Waiting for transaction confirmation...")
+            signed_approve_tx = self.account.sign_transaction(approve_tx)
+            tx_hash = self.w3.eth.send_raw_transaction(self._get_raw_transaction(signed_approve_tx))
+            print(f"Approval tx sent: {tx_hash.hex()}")
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
-            
-            if receipt['status'] == 1:
-                # Get token balance after swap
-                token_out_contract = self.bot.get_token_contract(token_out_cs)
-                token_out_balance_before = token_out_contract.functions.balanceOf(self.address).call()
-                
-                print(f"✅ Swap successful! Gas used: {receipt['gasUsed']}")
-                
-                return {
-                    "success": True,
-                    "tx_hash": tx_hash_hex,
-                    "gas_used": receipt['gasUsed'],
-                    "token_out_balance": token_out_balance_before,
-                    "token_out_balance_eth": self.w3.from_wei(token_out_balance_before, 'ether')
-                }
-            else:
-                print("❌ Swap transaction failed!")
-                
-                return {
-                    "success": False,
-                    "tx_hash": tx_hash_hex,
-                    "error": "Transaction failed on-chain"
-                }
-                
-        except Exception as e:
-            print(f"❌ Error executing swap: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            return {
-                "success": False,
-                "error": str(e)
+            if receipt['status'] != 1:
+                raise Exception("Token approval for Permit2 failed")
+            print("✅ Token approval for Permit2 successful")
+        else:
+            print("✅ Token already approved for Permit2")
+    
+    def _approve_batch_router(self, token, amount):
+        """Approve BatchRouter to spend tokens through Permit2"""
+        print("\nApproving BatchRouter to spend tokens through Permit2...")
+        expiration = self.w3.eth.get_block('latest')['timestamp'] + 24 * 60 * 60
+        
+        approve_tx = self.permit2.functions.approve(
+            token,
+            CONTRACT_ADDRESSES["batchRouter"],
+            amount,
+            expiration
+        ).build_transaction({
+            'from': self.address,
+            'nonce': self.w3.eth.get_transaction_count(self.address),
+            'gas': 100000,
+            'gasPrice': self.w3.eth.gas_price,
+            'chainId': self.w3.eth.chain_id
+        })
+        
+        signed_approve_tx = self.account.sign_transaction(approve_tx)
+        tx_hash = self.w3.eth.send_raw_transaction(self._get_raw_transaction(signed_approve_tx))
+        print(f"Permit2 approval tx sent: {tx_hash.hex()}")
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+        if receipt['status'] != 1:
+            raise Exception("BatchRouter approval through Permit2 failed")
+        print("✅ BatchRouter approval through Permit2 successful")
+    
+    def swap_exact_in(self, token_in, token_out, amount, pool_address, slippage=0.05):
+        """
+        Swap exact amount of token_in for token_out using Balancer BatchRouter
+        
+        Args:
+            token_in: Address of input token
+            token_out: Address of output token
+            amount: Amount of token_in to swap (in ether)
+            pool_address: Address of Balancer pool
+            slippage: Maximum acceptable slippage (default 5%)
+        
+        Returns:
+            dict: Transaction result with success status and balance changes
+        """
+        # Convert addresses to checksum format
+        token_in = self.w3.to_checksum_address(token_in)
+        token_out = self.w3.to_checksum_address(token_out)
+        pool_address = self.w3.to_checksum_address(pool_address)
+        
+        amount_wei = self.w3.to_wei(amount, 'ether')
+        
+        # Check and print initial balances
+        initial_balance_in, initial_balance_out = self._print_balances(token_in, token_out, "Initial ")
+        
+        # Check if we have enough tokens
+        if initial_balance_in < amount_wei:
+            raise Exception(f"Insufficient balance. Need {amount} but only have {self.w3.from_wei(initial_balance_in, 'ether')}")
+        
+        # Ensure Permit2 approval
+        self._ensure_permit2_approval(token_in, amount_wei)
+        
+        # Create swap path for query
+        swap_path = {
+            'tokenIn': token_in,
+            'steps': [{
+                'pool': pool_address,
+                'tokenOut': token_out,
+                'isBuffer': False
+            }],
+            'exactAmountIn': amount_wei,
+            'minAmountOut': 0  # For query only
+        }
+        
+        # Query expected output
+        paths = [swap_path]
+        expected_output = self.batch_router.functions.querySwapExactIn(
+            paths,
+            self.address,
+            b''
+        ).call()
+        
+        expected_amount = expected_output[0][0]
+        print(f"\nExpected output: {self.w3.from_wei(expected_amount, 'ether')} ({expected_amount} wei)")
+        
+        # Calculate price
+        price = amount_wei / expected_amount if expected_amount > 0 else 0
+        print(f"Price: {price:.6f} {token_in} per {token_out}")
+        
+        # Calculate minimum amount with slippage
+        print(f"Using {slippage*100}% slippage tolerance")
+        min_amount_wei = int(expected_amount * (1 - slippage))
+        print(f"Minimum amount to receive: {self.w3.from_wei(min_amount_wei, 'ether')} ({min_amount_wei} wei)\n")
+        
+        # Update swap path with minimum amount
+        swap_path['minAmountOut'] = min_amount_wei
+        
+        # Approve BatchRouter through Permit2
+        self._approve_batch_router(token_in, amount_wei)
+        
+        # Wait for nonce to be ready
+        time.sleep(2)
+        nonce = self.w3.eth.get_transaction_count(self.address)
+        
+        # Set deadline (30 minutes)
+        deadline = self.w3.eth.get_block('latest')['timestamp'] + 1800
+        
+        # Build and send swap transaction
+        swap_tx = self.batch_router.functions.swapExactIn(
+            [swap_path],
+            deadline,
+            False,  # wethIsEth
+            b''
+        ).build_transaction({
+            'from': self.address,
+            'nonce': nonce,
+            'gas': 500000,
+            'gasPrice': self.w3.eth.gas_price,
+            'chainId': self.w3.eth.chain_id
+        })
+        
+        signed_swap_tx = self.account.sign_transaction(swap_tx)
+        tx_hash = self.w3.eth.send_raw_transaction(self._get_raw_transaction(signed_swap_tx))
+        print(f"\nSwap transaction sent: {tx_hash.hex()}")
+        
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+        if receipt['status'] != 1:
+            raise Exception("Swap transaction failed")
+        
+        print("✅ Swap successful!")
+        
+        # Check final balances and calculate changes
+        final_balance_in, final_balance_out = self._print_balances(token_in, token_out, "\nFinal ")
+        
+        # Calculate precise balance changes
+        balance_in_change = float(self.w3.from_wei(final_balance_in - initial_balance_in, 'ether'))
+        balance_out_change = float(self.w3.from_wei(final_balance_out - initial_balance_out, 'ether'))
+        
+        print("\nBalance Changes:")
+        print(f"  {token_in}: {balance_in_change:+.18f}")
+        print(f"  {token_out}: {balance_out_change:+.18f}")
+        
+        return {
+            'success': True,
+            'tx_hash': tx_hash.hex(),
+            'balance_changes': {
+                'token_in': balance_in_change,
+                'token_out': balance_out_change
             }
+        }
     
-    def swap_sdai_to_wagno(self, amount, min_amount_out=None, auto_permit=True):
-        """
-        Swap sDAI for waGNO on Balancer.
-        
-        Args:
-            amount: Amount of sDAI to swap (in ether units)
-            min_amount_out: Minimum amount of waGNO to receive (in ether units, optional)
-            auto_permit: Whether to automatically handle Permit2 authorization
-            
-        Returns:
-            dict: Swap result information
-        """
-        # Get token addresses from constants
-        sdai_address = os.environ.get('TOKEN_IN_ADDRESS', TOKEN_CONFIG["currency"]["address"])
-        wagno_address = os.environ.get('TOKEN_OUT_ADDRESS', TOKEN_CONFIG["wagno"]["address"])
-        
-        print(f"Swapping {amount} sDAI for waGNO...")
-        return self.swap(sdai_address, wagno_address, amount, min_amount_out, auto_permit)
+    def swap_sdai_to_wagno(self, amount):
+        """Swap sDAI to waGNO"""
+        return self.swap_exact_in(
+            token_in=TOKEN_CONFIG["currency"]["address"],
+            token_out=TOKEN_CONFIG["wagno"]["address"],
+            amount=amount,
+            pool_address=BALANCER_CONFIG["pool_address"]
+        )
     
-    def swap_wagno_to_sdai(self, amount, min_amount_out=None, auto_permit=True):
-        """
-        Swap waGNO for sDAI on Balancer.
-        
-        Args:
-            amount: Amount of waGNO to swap (in ether units)
-            min_amount_out: Minimum amount of sDAI to receive (in ether units, optional)
-            auto_permit: Whether to automatically handle Permit2 authorization
-            
-        Returns:
-            dict: Swap result information
-        """
-        # Get token addresses from constants
-        sdai_address = os.environ.get('TOKEN_IN_ADDRESS', TOKEN_CONFIG["currency"]["address"])
-        wagno_address = os.environ.get('TOKEN_OUT_ADDRESS', TOKEN_CONFIG["wagno"]["address"])
-        
-        print(f"Swapping {amount} waGNO for sDAI...")
-        return self.swap(wagno_address, sdai_address, amount, min_amount_out, auto_permit) 
+    def swap_wagno_to_sdai(self, amount):
+        """Swap waGNO to sDAI"""
+        return self.swap_exact_in(
+            token_in=TOKEN_CONFIG["wagno"]["address"],
+            token_out=TOKEN_CONFIG["currency"]["address"],
+            amount=amount,
+            pool_address=BALANCER_CONFIG["pool_address"]
+        ) 

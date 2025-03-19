@@ -361,7 +361,7 @@ class BalancerPermit2Handler:
             })
             
             signed_tx = self.w3.eth.account.sign_transaction(tx, private_key=self.account.key)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
             tx_hash_hex = tx_hash.hex()
             print(f"Transaction sent: {tx_hash_hex}")
             
@@ -433,4 +433,60 @@ class BalancerPermit2Handler:
             return True
         else:
             print("❌ Failed to create Permit2 authorization")
+            return False
+
+    def ensure_permit2_approval(self, token_address, amount):
+        """
+        Ensure Permit2 has approval to spend the specified token amount.
+        
+        Args:
+            token_address: Address of the token to approve
+            amount: Amount to approve (in wei)
+            
+        Returns:
+            bool: True if approval is successful or already approved
+        """
+        try:
+            # Check if BatchRouter is already approved
+            token_contract = self.bot.get_token_contract(token_address)
+            current_allowance = token_contract.functions.allowance(
+                self.address,
+                self.permit2_address
+            ).call()
+            
+            if current_allowance >= amount:
+                if self.verbose:
+                    print(f"✅ Permit2 already approved for {self.w3.from_wei(current_allowance, 'ether')} tokens")
+                return True
+            
+            print(f"Approving Permit2 to spend {self.w3.from_wei(amount, 'ether')} tokens...")
+            
+            # Approve Permit2 to spend tokens
+            approve_tx = token_contract.functions.approve(
+                self.permit2_address,
+                amount
+            ).build_transaction({
+                'from': self.address,
+                'nonce': self.w3.eth.get_transaction_count(self.address),
+                'gas': 100000,
+                'gasPrice': self.w3.eth.gas_price,
+                'chainId': self.w3.eth.chain_id
+            })
+            
+            # Sign and send transaction
+            signed_tx = self.account.sign_transaction(approve_tx)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            
+            print(f"⏳ Waiting for Permit2 approval transaction: {tx_hash.hex()}")
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+            
+            if receipt['status'] == 1:
+                print("✅ Permit2 approval successful!")
+                return True
+            else:
+                print("❌ Permit2 approval failed!")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error in Permit2 approval: {e}")
             return False 

@@ -24,6 +24,12 @@ class FutarchyBot(BaseBot):
     # In futarchy_bot.py, add to the __init__ method:
     def __init__(self, rpc_url=None, verbose=False):
         """Initialize the Futarchy Bot"""
+        self.verbose = verbose
+        
+        # Use default RPC URL if none provided
+        if not rpc_url:
+            rpc_url = os.environ.get('RPC_URL', 'https://gnosis-mainnet.public.blastapi.io')
+        
         super().__init__(rpc_url)
         
         # Initialize contract instances
@@ -47,6 +53,7 @@ class FutarchyBot(BaseBot):
         self.sdai_no_token = self.get_token_contract(TOKEN_CONFIG["currency"]["no_address"])
         self.gno_yes_token = self.get_token_contract(TOKEN_CONFIG["company"]["yes_address"])
         self.gno_no_token = self.get_token_contract(TOKEN_CONFIG["company"]["no_address"])
+        self.wagno_token = self.get_token_contract(TOKEN_CONFIG["wagno"]["address"])
         
         # Pool contracts
         self.yes_pool = self.w3.eth.contract(
@@ -100,6 +107,7 @@ class FutarchyBot(BaseBot):
         sdai_no_balance = self.sdai_no_token.functions.balanceOf(address).call()
         gno_yes_balance = self.gno_yes_token.functions.balanceOf(address).call()
         gno_no_balance = self.gno_no_token.functions.balanceOf(address).call()
+        wagno_balance = self.wagno_token.functions.balanceOf(address).call()
         
         # Format balances
         balances = {
@@ -112,6 +120,9 @@ class FutarchyBot(BaseBot):
                 "wallet": self.w3.from_wei(gno_balance, 'ether'),
                 "yes": self.w3.from_wei(gno_yes_balance, 'ether'),
                 "no": self.w3.from_wei(gno_no_balance, 'ether'),
+            },
+            "wagno": {
+                "wallet": self.w3.from_wei(wagno_balance, 'ether')
             }
         }
         
@@ -138,6 +149,9 @@ class FutarchyBot(BaseBot):
         print(f"  Wallet: {balances['company']['wallet']:.6f}")
         print(f"  YES Tokens: {balances['company']['yes']:.6f}")
         print(f"  NO Tokens: {balances['company']['no']:.6f}")
+        
+        print(f"\n🟣 {TOKEN_CONFIG['wagno']['name']} (Wrapped GNO):")
+        print(f"  Wallet: {balances['wagno']['wallet']:.6f}")
     
     def get_yes_token_price_ratio(self):
         """
@@ -167,12 +181,56 @@ class FutarchyBot(BaseBot):
             print(f"❌ Error calculating YES token price ratio: {e}")
             return 0.5  # Default to 50% if calculation fails
     
+    def get_sdai_yes_probability(self):
+        """
+        Calculate the probability based on the sDAI-YES/sDAI pool price.
+        This is more accurate than using the GNO YES/NO pools for probability.
+        
+        Returns:
+            float: Probability between 0 and 1
+        """
+        try:
+            # Get the pool contract
+            pool_address = CONTRACT_ADDRESSES["sdaiYesPool"]
+            pool = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(pool_address),
+                abi=UNISWAP_V3_POOL_ABI
+            )
+            
+            # Get current price from slot0
+            slot0 = pool.functions.slot0().call()
+            sqrt_price_x96 = int(slot0[0])
+            
+            # Calculate raw price from sqrtPriceX96
+            raw_price = (sqrt_price_x96 ** 2) / (2 ** 192)
+            
+            # Get token order to determine if we need to invert
+            token0 = pool.functions.token0().call().lower()
+            sdai_yes_address = TOKEN_CONFIG["currency"]["yes_address"].lower()
+            
+            # If sDAI-YES is token0, we need to invert the price
+            probability = 1 / raw_price if sdai_yes_address == token0 else raw_price
+            
+            # Ensure the probability is between 0 and 1
+            probability = max(0, min(1, probability))
+            
+            return probability
+            
+        except Exception as e:
+            print(f"❌ Error calculating sDAI-YES probability: {e}")
+            return None
+    
     def get_market_prices(self):
         """
         Get market prices and probabilities.
         
         Returns:
-            dict: Market price information
+            dict: Market price information including:
+                - yes_company_price: Price of GNO YES tokens in terms of sDAI YES
+                - no_company_price: Price of GNO NO tokens in terms of sDAI NO
+                - gno_spot_price: Current market price of GNO in sDAI
+                - event_probability: Probability of the event occurring (from sDAI-YES/sDAI price)
+                - synthetic_spot_price: Synthetic GNO price calculated from YES/NO prices and probability
         """
         try:
             # Get slot0 data from pools
@@ -193,18 +251,26 @@ class FutarchyBot(BaseBot):
             # Try to get GNO/SDAI price from CowSwap
             gno_spot_price = self.get_gno_sdai_price()
             
-            # Get YES token price ratio as probability directly
+            # Get probability from sDAI-YES/sDAI pool
             try:
-                event_probability = self.get_yes_token_price_ratio()
+                event_probability = self.get_sdai_yes_probability()
+                if event_probability is None:
+                    # Fallback to old method if new method fails
+                    event_probability = self.get_yes_token_price_ratio()
             except Exception as prob_err:
                 print(f"❌ Error calculating event probability: {prob_err}")
                 event_probability = 0.5  # Default to 50% as fallback
             
+            # Calculate synthetic spot price
+            # synthetic_price = yes_price * probability + no_price * (1 - probability)
+            synthetic_spot_price = (yes_company_price * event_probability) + (no_company_price * (1 - event_probability))
+            
             return {
                 "yes_company_price": yes_company_price,
                 "no_company_price": no_company_price,
-                "gno_spot_price": gno_spot_price,  # GNO price in SDAI
-                "event_probability": event_probability
+                "gno_spot_price": gno_spot_price,  # GNO price in sDAI
+                "event_probability": event_probability,
+                "synthetic_spot_price": synthetic_spot_price
             }
         except Exception as e:
             print(f"❌ Error getting market prices: {e}")
@@ -280,10 +346,29 @@ class FutarchyBot(BaseBot):
                 return
         
         print("\n=== Market Prices & Probability ===")
-        print(f"YES GNO Price: {prices['yes_company_price']:.6f}")
-        print(f"NO GNO Price: {prices['no_company_price']:.6f}")
-        print(f"GNO Spot Price (SDAI): {prices['gno_spot_price']:.6f}")
+        print(f"YES GNO Price: {prices['yes_company_price']:.6f} sDAI")
+        print(f"NO GNO Price: {prices['no_company_price']:.6f} sDAI")
+        print(f"GNO Spot Price (sDAI): {prices['gno_spot_price']:.6f}")
         print(f"Event Probability: {prices['event_probability']:.2%}")
+        
+        # Print synthetic price with calculation explanation
+        print("\n=== Synthetic Price Calculation ===")
+        print(f"Synthetic GNO Price: {prices['synthetic_spot_price']:.6f} sDAI")
+        print(f"Formula: (YES_price * probability) + (NO_price * (1 - probability))")
+        print(f"       = ({prices['yes_company_price']:.6f} * {prices['event_probability']:.4f}) + ({prices['no_company_price']:.6f} * {1 - prices['event_probability']:.4f})")
+        print(f"       = {prices['yes_company_price'] * prices['event_probability']:.6f} + {prices['no_company_price'] * (1 - prices['event_probability']):.6f}")
+        print(f"       = {prices['synthetic_spot_price']:.6f} sDAI")
+        
+        # Calculate and show potential arbitrage
+        if prices['gno_spot_price'] > 0:  # Avoid division by zero
+            price_difference = ((prices['synthetic_spot_price'] / prices['gno_spot_price']) - 1) * 100
+            print(f"\nArbitrage Opportunity:")
+            print(f"Price Difference: {price_difference:+.2f}% (synthetic vs spot)")
+            if abs(price_difference) > 2:  # Only show suggestion if difference is significant
+                if price_difference > 0:
+                    print("Suggestion: Buy GNO at spot price, sell synthetically through YES/NO tokens")
+                else:
+                    print("Suggestion: Buy synthetic exposure through YES/NO tokens, sell GNO at spot price")
     
     def add_collateral(self, token_type, amount):
         """
@@ -304,29 +389,56 @@ class FutarchyBot(BaseBot):
             token_address = TOKEN_CONFIG["currency"]["address"]
             token_name = TOKEN_CONFIG["currency"]["name"]
             token_contract = self.sdai_token
+            yes_token_address = TOKEN_CONFIG["currency"]["yes_address"]
+            no_token_address = TOKEN_CONFIG["currency"]["no_address"]
         elif token_type == "company":
             token_address = TOKEN_CONFIG["company"]["address"]
             token_name = TOKEN_CONFIG["company"]["name"]
             token_contract = self.gno_token
+            yes_token_address = TOKEN_CONFIG["company"]["yes_address"]
+            no_token_address = TOKEN_CONFIG["company"]["no_address"]
         else:
             raise ValueError(f"Invalid token type: {token_type}")
+        
+        if self.verbose:
+            print("\nContract Addresses:")
+            print(f"Base Token ({token_name}): {token_address}")
+            print(f"{token_name} YES: {yes_token_address}")
+            print(f"{token_name} NO: {no_token_address}")
+            print(f"Futarchy Router: {CONTRACT_ADDRESSES['futarchyRouter']}")
+            print(f"Market: {CONTRACT_ADDRESSES['market']}\n")
         
         # Convert amount to wei
         amount_wei = self.w3.to_wei(amount, 'ether')
         
-        # Check balance
+        # Check balance with more detailed output
         has_balance, actual_balance = self.check_token_balance(token_address, amount_wei)
+        print(f"\nCurrent Balances:")
+        print(f"{token_name}: {self.w3.from_wei(actual_balance, 'ether')} ({actual_balance} wei)")
+        print(f"Amount to split: {amount} {token_name} ({amount_wei} wei)\n")
+        
         if not has_balance:
             print(f"❌ Insufficient {token_name} balance")
             print(f"   Required: {self.w3.from_wei(amount_wei, 'ether')} {token_name}")
             print(f"   Available: {self.w3.from_wei(actual_balance, 'ether')} {token_name}")
             return False
         
-        # Approve router to spend tokens
-        if not self.approve_token(token_contract, CONTRACT_ADDRESSES["futarchyRouter"], amount_wei):
-            return False
+        # Check and display allowance
+        allowance = token_contract.functions.allowance(
+            self.address,
+            CONTRACT_ADDRESSES["futarchyRouter"]
+        ).call()
+        print(f"{token_name} allowance for Router: {self.w3.from_wei(allowance, 'ether')} {token_name}")
         
-        print(f"📝 Adding {amount} {token_name} as collateral...")
+        # Approve router to spend tokens
+        if allowance < amount_wei:
+            print(f"Approving {token_name} for Router...")
+            if not self.approve_token(token_contract, CONTRACT_ADDRESSES["futarchyRouter"], amount_wei):
+                return False
+        else:
+            print(f"✅ {token_name} already approved for Router")
+        
+        print(f"\n📝 Splitting {amount} {token_name} into YES/NO tokens...")
         
         try:
             # Build transaction
@@ -346,20 +458,34 @@ class FutarchyBot(BaseBot):
             signed_tx = self.w3.eth.account.sign_transaction(tx, self.account.key)
             tx_hash = self.w3.eth.send_raw_transaction(get_raw_transaction(signed_tx))
             
-            print(f"⏳ Collateral transaction sent: {tx_hash.hex()}")
+            print(f"\n⏳ Split transaction sent: {tx_hash.hex()}")
+            print(f"Transaction: https://gnosisscan.io/tx/{tx_hash.hex()}")
             
             # Wait for transaction confirmation
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
             
             if receipt['status'] == 1:
-                print(f"✅ {amount} {token_name} added as collateral successfully!")
+                # Check new balances
+                yes_token = self.get_token_contract(yes_token_address)
+                no_token = self.get_token_contract(no_token_address)
+                
+                yes_balance = yes_token.functions.balanceOf(self.address).call()
+                no_balance = no_token.functions.balanceOf(self.address).call()
+                
+                print(f"\n✅ Successfully split {token_name} into conditional tokens!")
+                print(f"New balances:")
+                print(f"{token_name} YES: {self.w3.from_wei(yes_balance, 'ether')}")
+                print(f"{token_name} NO: {self.w3.from_wei(no_balance, 'ether')}")
                 return True
             else:
-                print(f"❌ Adding collateral failed!")
+                print(f"❌ Split transaction failed!")
+                print(f"Check transaction details at: https://blockscout.com/xdai/mainnet/tx/{tx_hash.hex()}")
                 return False
-        
+                
         except Exception as e:
-            print(f"❌ Error adding collateral: {e}")
+            print(f"❌ Error splitting {token_name} into conditional tokens: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def remove_collateral(self, token_type, amount):

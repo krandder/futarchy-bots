@@ -1,0 +1,21 @@
+[
+    {
+        "constant": true,
+        "inputs": [{"name": "_owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "balance", "type": "uint256"}],
+        "type": "function"
+    },
+    {
+        "constant": false,
+        "inputs": [
+            {"name": "assets", "type": "uint256"},
+            {"name": "receiver", "type": "address"},
+            {"name": "owner", "type": "address"},
+            {"name": "toUnderlying", "type": "bool"}
+        ],
+        "name": "redeem",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "type": "function"
+    }
+] 

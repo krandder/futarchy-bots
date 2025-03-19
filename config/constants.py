@@ -28,6 +28,7 @@ CONTRACT_ADDRESSES = {
     "balancerPool": "0xd1d7fa8871d84d0e77020fc28b7cd5718c446522",
     "wagno": "0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644",
     "sushiswapNFPM": "0xaB235da7f52d35fb4551AfBa11BFB56e18774A65",  # SushiSwap V3 NonFungiblePositionManager
+    "sdaiYesPool": "0xC7405C82cFc9A652a469fAf21B7FE88D6E7d675c",  # SushiSwap V3 YES_sDAI/sDAI pool
 }
 
 # Pool configurations
@@ -68,7 +69,7 @@ TOKEN_CONFIG = {
 BALANCER_CONFIG = {
     "vault_address": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
     "pool_address": "0xd1d7fa8871d84d0e77020fc28b7cd5718c446522",
-    "pool_id": "0xD1D7Fa8871d84d0E77020fc28B7Cd5718C4465220002000000000000000001d7"
+    "pool_id": "0xd1d7fa8871d84d0e77020fc28b7cd5718c4465220000000000000000000001d7"
 }
 
 # Default swap configuration
@@ -137,15 +138,285 @@ SDAI_DEPOSIT_ABI = [
 # ABIs for Balancer and Aave contracts
 BALANCER_VAULT_ABI = [
     {"inputs":[{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"address","name":"assetIn","type":"address"},{"internalType":"address","name":"assetOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.SingleSwap","name":"singleSwap","type":"tuple"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"},{"internalType":"uint256","name":"limit","type":"uint256"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"name":"swap","outputs":[{"internalType":"uint256","name":"amountCalculated","type":"uint256"}],"stateMutability":"payable","type":"function"},
-    {"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"}],"name":"getPoolTokens","outputs":[{"internalType":"address[]","name":"tokens","type":"address[]"},{"internalType":"uint256[]","name":"balances","type":"uint256[]"},{"internalType":"uint256","name":"lastChangeBlock","type":"uint256"}],"stateMutability":"view","type":"function"}
+    {"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"}],"name":"getPoolTokens","outputs":[{"internalType":"address[]","name":"tokens","type":"address[]"},{"internalType":"uint256[]","name":"balances","type":"uint256[]"},{"internalType":"uint256","name":"lastChangeBlock","type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"querySwap","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}
 ]
 
 BALANCER_POOL_ABI = [
     {"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"}
 ]
 
+BALANCER_BATCH_ROUTER_ABI = [
+    {
+        "inputs": [
+            {
+                "components": [
+                    {
+                        "internalType": "contract IERC20",
+                        "name": "tokenIn",
+                        "type": "address"
+                    },
+                    {
+                        "components": [
+                            {
+                                "internalType": "address",
+                                "name": "pool",
+                                "type": "address"
+                            },
+                            {
+                                "internalType": "contract IERC20",
+                                "name": "tokenOut",
+                                "type": "address"
+                            },
+                            {
+                                "internalType": "bool",
+                                "name": "isBuffer",
+                                "type": "bool"
+                            }
+                        ],
+                        "internalType": "struct IBatchRouter.SwapPathStep[]",
+                        "name": "steps",
+                        "type": "tuple[]"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "exactAmountIn",
+                        "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "minAmountOut",
+                        "type": "uint256"
+                    }
+                ],
+                "internalType": "struct IBatchRouter.SwapPathExactAmountIn[]",
+                "name": "paths",
+                "type": "tuple[]"
+            },
+            {
+                "internalType": "uint256",
+                "name": "deadline",
+                "type": "uint256"
+            },
+            {
+                "internalType": "bool",
+                "name": "wethIsEth",
+                "type": "bool"
+            },
+            {
+                "internalType": "bytes",
+                "name": "userData",
+                "type": "bytes"
+            }
+        ],
+        "name": "swapExactIn",
+        "outputs": [
+            {
+                "internalType": "uint256[]",
+                "name": "pathAmountsOut",
+                "type": "uint256[]"
+            },
+            {
+                "internalType": "address[]",
+                "name": "tokensOut",
+                "type": "address[]"
+            },
+            {
+                "internalType": "uint256[]",
+                "name": "amountsOut",
+                "type": "uint256[]"
+            }
+        ],
+        "stateMutability": "payable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "components": [
+                    {
+                        "internalType": "contract IERC20",
+                        "name": "tokenIn",
+                        "type": "address"
+                    },
+                    {
+                        "components": [
+                            {
+                                "internalType": "address",
+                                "name": "pool",
+                                "type": "address"
+                            },
+                            {
+                                "internalType": "contract IERC20",
+                                "name": "tokenOut",
+                                "type": "address"
+                            },
+                            {
+                                "internalType": "bool",
+                                "name": "isBuffer",
+                                "type": "bool"
+                            }
+                        ],
+                        "internalType": "struct IBatchRouter.SwapPathStep[]",
+                        "name": "steps",
+                        "type": "tuple[]"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "exactAmountIn",
+                        "type": "uint256"
+                    },
+                    {
+                        "internalType": "uint256",
+                        "name": "minAmountOut",
+                        "type": "uint256"
+                    }
+                ],
+                "internalType": "struct IBatchRouter.SwapPathExactAmountIn[]",
+                "name": "paths",
+                "type": "tuple[]"
+            },
+            {
+                "internalType": "address",
+                "name": "sender",
+                "type": "address"
+            },
+            {
+                "internalType": "bytes",
+                "name": "userData",
+                "type": "bytes"
+            }
+        ],
+        "name": "querySwapExactIn",
+        "outputs": [
+            {
+                "internalType": "uint256[]",
+                "name": "pathAmountsOut",
+                "type": "uint256[]"
+            },
+            {
+                "internalType": "address[]",
+                "name": "tokensOut",
+                "type": "address[]"
+            },
+            {
+                "internalType": "uint256[]",
+                "name": "amountsOut",
+                "type": "uint256[]"
+            }
+        ],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]
+
 WAGNO_ABI = [
     {"inputs":[{"name":"assets","type":"uint256"},{"name":"receiver","type":"address"}],"name":"deposit","outputs":[{"name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},
     {"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
     {"inputs":[{"name":"shares","type":"uint256"},{"name":"receiver","type":"address"},{"name":"owner","type":"address"}],"name":"redeem","outputs":[{"name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}
+]
+
+PERMIT2_ABI = [
+    {
+        "inputs": [
+            {"name": "owner", "type": "address"},
+            {
+                "components": [
+                    {
+                        "components": [
+                            {"name": "token", "type": "address"},
+                            {"name": "amount", "type": "uint160"},
+                            {"name": "expiration", "type": "uint48"},
+                            {"name": "nonce", "type": "uint48"}
+                        ],
+                        "name": "details",
+                        "type": "tuple"
+                    },
+                    {"name": "spender", "type": "address"},
+                    {"name": "sigDeadline", "type": "uint256"}
+                ],
+                "name": "permitSingle",
+                "type": "tuple"
+            },
+            {"name": "signature", "type": "bytes"}
+        ],
+        "name": "permit",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "from", "type": "address"},
+            {"name": "to", "type": "address"},
+            {"name": "amount", "type": "uint160"},
+            {"name": "token", "type": "address"}
+        ],
+        "name": "transferFrom",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "owner", "type": "address"}
+        ],
+        "name": "nonces",
+        "outputs": [
+            {"name": "", "type": "uint256"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "DOMAIN_SEPARATOR",
+        "outputs": [
+            {"name": "", "type": "bytes32"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "components": [
+                    {"name": "token", "type": "address"},
+                    {"name": "amount", "type": "uint160"},
+                    {"name": "expiration", "type": "uint48"},
+                    {"name": "nonce", "type": "uint48"}
+                ],
+                "name": "details",
+                "type": "tuple"
+            },
+            {"name": "owner", "type": "address"},
+            {"name": "spender", "type": "address"}
+        ],
+        "name": "allowance",
+        "outputs": [
+            {
+                "components": [
+                    {"name": "amount", "type": "uint160"},
+                    {"name": "expiration", "type": "uint48"},
+                    {"name": "nonce", "type": "uint48"}
+                ],
+                "name": "",
+                "type": "tuple"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "token", "type": "address"},
+            {"name": "spender", "type": "address"},
+            {"name": "amount", "type": "uint160"},
+            {"name": "expiration", "type": "uint48"}
+        ],
+        "name": "approve",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
 ]

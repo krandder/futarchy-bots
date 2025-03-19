@@ -26,6 +26,50 @@ A tool for adding and managing concentrated liquidity positions in SushiSwap V3 
 
 This functionality allows users to provide liquidity to the YES and NO markets with greater capital efficiency.
 
+## Development Setup
+
+### Prerequisites
+
+- Python 3.8+
+- Git
+
+### First-time Setup
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/futarchy-bots.git
+cd futarchy-bots
+```
+
+2. Run the development setup script:
+```bash
+./scripts/setup_dev.sh
+```
+
+This script will:
+- Create a Python virtual environment
+- Install all required dependencies
+- Set up the package in development mode
+
+3. Create a `.env` file with your configuration:
+```
+PRIVATE_KEY=your_private_key_here
+RPC_URL=your_rpc_url_here
+```
+
+### Daily Development
+
+1. Activate the virtual environment:
+```bash
+source venv/bin/activate
+```
+
+2. When dependencies change:
+- Run the setup script again to update:
+```bash
+./scripts/setup_dev.sh
+```
+
 ## Usage
 
 ### Price Impact Calculator
@@ -40,33 +84,6 @@ Options:
 ### SushiSwap V3 Liquidity Provider
 
 The liquidity provider functionality is integrated into the main futarchy bot and can be accessed through the CLI menu.
-
-## Requirements
-
-- Python 3.8+
-- Web3.py
-- Eth-account
-- Python-dotenv
-- Other dependencies listed in requirements.txt
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/futarchy-bots.git
-cd futarchy-bots
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Create a `.env` file with your configuration:
-```
-PRIVATE_KEY=your_private_key_here
-RPC_URL=your_rpc_url_here
-```
 
 ## License
 

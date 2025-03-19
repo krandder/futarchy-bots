@@ -3,6 +3,7 @@ import json
 from web3 import Web3
 from eth_account import Account
 from eth_account.messages import encode_typed_data
+from hexbytes import HexBytes
 from dotenv import load_dotenv
 
 class Permit2Handler:
@@ -16,17 +17,21 @@ class Permit2Handler:
     MAX_ALLOWANCE_EXPIRATION = 2 ** 48 - 1
     MAX_SIG_DEADLINE = 2 ** 256 - 1
     
-    def __init__(self, w3, account):
+    def __init__(self, w3, account, token_address=None, spender_address=None):
         """
         Initialize the Permit2 handler.
         
         Args:
             w3: Web3 instance
             account: Account instance
+            token_address: Address of the token to approve
+            spender_address: Address of the spender to approve
         """
         self.w3 = w3
         self.account = account
         self.address = account.address
+        self.token_address = token_address
+        self.spender_address = spender_address
         
         # Load Permit2 ABI
         with open('config/permit2_abi.json', 'r') as f:
@@ -38,51 +43,40 @@ class Permit2Handler:
             abi=self.permit2_abi
         )
     
-    def get_nonce(self, owner_address=None):
+    def get_nonce(self):
         """Get the current nonce for an owner"""
-        owner = owner_address or self.address
-        return self.permit2_contract.functions.nonces(owner).call()
+        return self.permit2_contract.functions.nonces(self.address).call()
     
     def get_domain_separator(self):
         """Get the domain separator for signing"""
         return self.permit2_contract.functions.DOMAIN_SEPARATOR().call()
     
-    def get_permit_domain(self):
-        """Get the Permit2 domain data for EIP-712 signing"""
-        return {
-            "name": "Permit2",
-            "chainId": self.w3.eth.chain_id,
-            "verifyingContract": self.PERMIT2_ADDRESS
-        }
-    
-    def create_permit_data(self, token_address, spender, amount, expiration, nonce=None, deadline=None):
+    def sign_permit(self, token_address, spender_address, amount, deadline):
         """
-        Create the permit data for EIP-712 signing in the format expected by Permit2.
+        Sign a Permit2 authorization.
         
         Args:
-            token_address: Address of the token to approve
-            spender: Address to approve for spending
-            amount: Amount to approve (in wei)
-            expiration: Timestamp when the permission expires
-            nonce: Optional nonce to use (will fetch current nonce if not provided)
-            deadline: Optional signature deadline (defaults to max value)
+            token_address: Address of the token to permit
+            spender_address: Address of the spender to permit
+            amount: Amount to permit (in wei)
+            deadline: Timestamp when the permit expires
             
         Returns:
-            dict: The permit data structure
+            tuple: (permit_data, signature)
         """
-        if nonce is None:
-            nonce = self.get_nonce()
-            
-        if deadline is None:
-            deadline = self.MAX_SIG_DEADLINE
+        # Get current nonce
+        current_nonce = self.get_nonce()
         
-        # Create the permit data structure following the SDK pattern
-        permit_data = {
+        # Set expiration to 24 hours from now
+        expiration_time = self.w3.eth.get_block('latest')['timestamp'] + 24 * 60 * 60
+        
+        # Prepare the typed data structure according to EIP-712 for Permit2
+        typed_data = {
             "types": {
-                "PermitSingle": [
-                    {"name": "details", "type": "PermitDetails"},
-                    {"name": "spender", "type": "address"},
-                    {"name": "sigDeadline", "type": "uint256"}
+                "EIP712Domain": [
+                    {"name": "name", "type": "string"},
+                    {"name": "chainId", "type": "uint256"},
+                    {"name": "verifyingContract", "type": "address"}
                 ],
                 "PermitDetails": [
                     {"name": "token", "type": "address"},
@@ -90,66 +84,43 @@ class Permit2Handler:
                     {"name": "expiration", "type": "uint48"},
                     {"name": "nonce", "type": "uint48"}
                 ],
-                "EIP712Domain": [
-                    {"name": "name", "type": "string"},
-                    {"name": "chainId", "type": "uint256"},
-                    {"name": "verifyingContract", "type": "address"}
+                "PermitSingle": [
+                    {"name": "details", "type": "PermitDetails"},
+                    {"name": "spender", "type": "address"},
+                    {"name": "sigDeadline", "type": "uint256"}
                 ]
             },
-            "domain": self.get_permit_domain(),
+            "domain": {
+                "name": "Permit2",
+                "chainId": self.w3.eth.chain_id,
+                "verifyingContract": self.PERMIT2_ADDRESS
+            },
             "primaryType": "PermitSingle",
             "message": {
                 "details": {
                     "token": token_address,
                     "amount": amount,
-                    "expiration": expiration,
-                    "nonce": nonce
+                    "expiration": expiration_time,
+                    "nonce": current_nonce
                 },
-                "spender": spender,
+                "spender": spender_address,
                 "sigDeadline": deadline
             }
         }
         
-        return permit_data
-    
-    def sign_permit(self, token_address, spender, amount, expiration, nonce=None, deadline=None):
-        """
-        Sign a permit using EIP-712 typed data.
+        # Sign the message
+        encoded_message = encode_typed_data(full_message=typed_data)
+        signed_message = self.account.sign_message(encoded_message)
+        signature = signed_message.signature.hex()
         
-        Args:
-            token_address: Address of the token to approve
-            spender: Address to approve for spending
-            amount: Amount to approve (in wei)
-            expiration: Timestamp when the permission expires
-            nonce: Optional nonce to use (will fetch current nonce if not provided)
-            deadline: Optional signature deadline (defaults to 30 days from now)
-            
-        Returns:
-            tuple: (permit_data, signature)
-        """
-        if deadline is None:
-            # Default to 30 days from now (in seconds)
-            deadline = self.w3.eth.get_block('latest')['timestamp'] + (30 * 24 * 60 * 60)
-        
-        # Create the permit data
-        permit_data = self.create_permit_data(
-            token_address, 
-            spender, 
-            amount, 
-            expiration, 
-            nonce, 
-            deadline
+        # Create permit data
+        permit_single = (
+            (token_address, amount, expiration_time, current_nonce),  # details
+            spender_address,  # spender
+            deadline  # sigDeadline
         )
         
-        # Sign the permit using EIP-712
-        signature = self.w3.eth.account.sign_typed_data(
-            domain_data=permit_data["domain"],
-            message_types=permit_data["types"],
-            message_data=permit_data["message"],
-            private_key=self.account.key
-        ).signature
-        
-        return permit_data["message"], signature
+        return permit_single, HexBytes(signature)
     
     def approve_token_with_permit2(self, token_address, spender, amount, deadline=None):
         """
@@ -222,18 +193,17 @@ class Permit2Handler:
                 print("✅ Token approved for Permit2")
             
             # Get permit data and signature
-            expiration = deadline  # Use the same deadline for expiration
-            permit_data, signature = self.sign_permit(
+            permit_single, signature = self.sign_permit(
                 token_address,
                 spender,
                 amount,
-                expiration
+                deadline
             )
             
             # Build the permit transaction
             permit_tx = self.permit2_contract.functions.permit(
                 self.address,
-                permit_data,
+                permit_single,
                 signature
             ).build_transaction({
                 'from': self.address,

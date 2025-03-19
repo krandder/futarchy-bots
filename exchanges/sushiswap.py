@@ -1,17 +1,20 @@
-from ..config.constants import (
-    SUSHISWAP_V3_ROUTER_ABI, 
-    SUSHISWAP_V3_NFPM_ABI, 
-    CONTRACT_ADDRESSES, 
-    MIN_SQRT_RATIO, 
-    MAX_SQRT_RATIO,
-    UNISWAP_V3_POOL_ABI
+from config.constants import (
+    CONTRACT_ADDRESSES,
+    SUSHISWAP_V3_ROUTER_ABI,
+    SUSHISWAP_V3_NFPM_ABI,
+    UNISWAP_V3_POOL_ABI,
+    ERC20_ABI
 )
-from ..utils.web3_utils import get_raw_transaction
+from utils.web3_utils import get_raw_transaction
 import time
 import math
 
 class SushiSwapExchange:
     """Class for interacting with SushiSwap V3"""
+    
+    # Constants for price limits
+    MIN_SQRT_RATIO = 4295128739  # Minimum value for sqrtPriceX96
+    MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342  # Maximum value for sqrtPriceX96
     
     def __init__(self, bot):
         """
@@ -54,24 +57,62 @@ class SushiSwapExchange:
         if self.account is None:
             raise ValueError("No account configured for transactions")
         
-        # Approve token for SushiSwap
-        token_in_contract = self.bot.get_token_contract(token_in)
-        if not self.bot.approve_token(token_in_contract, CONTRACT_ADDRESSES["sushiswap"], amount):
-            return False
+        # Convert addresses to checksum format
+        pool_address = self.w3.to_checksum_address(pool_address)
+        token_in = self.w3.to_checksum_address(token_in)
+        token_out = self.w3.to_checksum_address(token_out)
+        sushiswap_address = self.w3.to_checksum_address(CONTRACT_ADDRESSES["sushiswap"])
         
-        # Set price limit based on swap direction
-        sqrt_price_limit_x96 = MIN_SQRT_RATIO if zero_for_one else MAX_SQRT_RATIO
+        # Check current allowance and balance
+        token_in_contract = self.bot.get_token_contract(token_in)
+        current_allowance = token_in_contract.functions.allowance(
+            self.address,
+            sushiswap_address
+        ).call()
+        current_balance = token_in_contract.functions.balanceOf(self.address).call()
+        
+        print(f"Current allowance: {self.w3.from_wei(current_allowance, 'ether')}")
+        print(f"Current balance: {self.w3.from_wei(current_balance, 'ether')}")
+        print(f"Required amount: {self.w3.from_wei(amount, 'ether')}")
+        
+        # Reset allowance if it's too low
+        if current_allowance < amount:
+            print(f"Insufficient allowance. Approving {self.w3.from_wei(amount, 'ether')} tokens...")
+            if not self.bot.approve_token(token_in_contract, sushiswap_address, amount):
+                return False
+        
+        # Get current pool price
+        pool_contract = self.w3.eth.contract(
+            address=pool_address,
+            abi=UNISWAP_V3_POOL_ABI
+        )
+        slot0 = pool_contract.functions.slot0().call()
+        current_sqrt_price_x96 = slot0[0]
+        
+        # Calculate a more reasonable price limit (allow 50% price impact)
+        if zero_for_one:
+            # If selling token0 for token1, we want a lower limit
+            sqrt_price_limit_x96 = int(current_sqrt_price_x96 * 0.5)  # Allow up to 50% worse price
+            # Ensure we don't go below the minimum
+            sqrt_price_limit_x96 = max(sqrt_price_limit_x96, self.MIN_SQRT_RATIO)
+        else:
+            # If selling token1 for token0, we want a higher limit
+            sqrt_price_limit_x96 = int(current_sqrt_price_x96 * 2.0)  # Allow up to 50% worse price
+            # Ensure we don't exceed the maximum
+            sqrt_price_limit_x96 = min(sqrt_price_limit_x96, self.MAX_SQRT_RATIO)
         
         print(f"📝 Executing SushiSwap swap for {self.w3.from_wei(amount, 'ether')} tokens")
         print(f"Pool address: {pool_address}")
         print(f"Token In: {token_in}")
         print(f"Token Out: {token_out}")
         print(f"ZeroForOne: {zero_for_one}")
+        print(f"Current sqrt price: {current_sqrt_price_x96}")
+        print(f"Price limit: {sqrt_price_limit_x96}")
         
         try:
             # Build transaction for swap
             swap_tx = self.router.functions.swap(
-                self.w3.to_checksum_address(pool_address),  # pool address
+                pool_address,  # pool address
                 self.address,  # recipient
                 zero_for_one,  # zeroForOne
                 int(amount),  # amountSpecified
