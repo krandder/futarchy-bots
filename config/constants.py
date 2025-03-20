@@ -1,5 +1,12 @@
 # Constants, contract addresses, and ABIs for the Futarchy Trading Bot
 
+# Default RPC URLs (fallbacks if not set in environment)
+DEFAULT_RPC_URLS = [
+    "https://gnosis-mainnet.public.blastapi.io",  # Primary
+    "https://rpc.gnosischain.com",                # Backup 1
+    "https://rpc.ankr.com/gnosis"                 # Backup 2
+]
+
 # API Endpoints
 COWSWAP_API_URL = "https://api.cow.fi/xdai"  # Gnosis Chain (Production)
 
@@ -9,7 +16,7 @@ CONTRACT_ADDRESSES = {
     # WARNING: NEVER USE THIS ROUTER ADDRESS: 0x592abc3734cd0d458e6e44a2db2992a3d00283a4
     # This SushiSwap V3 Passthrough Router has a critical flaw where tokens get permanently stuck 
     # if a swap fails. We lost funds to this issue. Use a different router implementation.
-    "sushiswap": None,  # TODO: Replace with a secure router implementation
+    "sushiswap": "0xE592427A0AEce92De3Edee1F18E0157C05861564",  # Using Uniswap V3 Router instead
     "market": "0x6242AbA055957A63d682e9D3de3364ACB53D053A",
     "conditionalTokens": "0xCeAfDD6bc0bEF976fdCd1112955828E00543c0Ce",
     "wrapperService": "0xc14f5d2B9d6945EF1BA93f8dB20294b90FA5b5b1",
@@ -32,6 +39,7 @@ CONTRACT_ADDRESSES = {
     "wagno": "0x7c16f0185a26db0ae7a9377f23bc18ea7ce5d644",
     "sushiswapNFPM": "0xaB235da7f52d35fb4551AfBa11BFB56e18774A65",  # SushiSwap V3 NonFungiblePositionManager
     "sdaiYesPool": "0xC7405C82cFc9A652a469fAf21B7FE88D6E7d675c",  # SushiSwap V3 YES_sDAI/sDAI pool
+    "uniswapV3PassthroughRouter": "0x77DBE0441C950cE9C97a5F9A79CF316947aAa578"  # UniswapV3PassthroughRouter
 }
 
 # Pool configurations
@@ -423,3 +431,45 @@ PERMIT2_ABI = [
         "type": "function"
     }
 ]
+
+# Add UniswapV3PassthroughRouter ABI after other ABIs
+UNISWAP_V3_PASSTHROUGH_ROUTER_ABI = [
+    {
+        "inputs": [
+            {"internalType": "address", "name": "pool", "type": "address"},
+            {"internalType": "address", "name": "recipient", "type": "address"},
+            {"internalType": "bool", "name": "zeroForOne", "type": "bool"},
+            {"internalType": "int256", "name": "amountSpecified", "type": "int256"},
+            {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"},
+            {"internalType": "bytes", "name": "data", "type": "bytes"}
+        ],
+        "name": "swap",
+        "outputs": [
+            {"internalType": "int256", "name": "amount0", "type": "int256"},
+            {"internalType": "int256", "name": "amount1", "type": "int256"}
+        ],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "owner",
+        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{"internalType": "address", "name": "pool", "type": "address"}],
+        "name": "authorizePool",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]
+
+# Add UniswapV3 specific configuration
+UNISWAP_V3_CONFIG = {
+    "sqrt_price_limit_x96": 4295128740,  # Default sqrt price limit
+    "zero_for_one": True,  # Default direction for NO pool swaps
+    "recipient_address": "0x33A0b5d7DA5314594D2C163D448030b9F1cADcb2"  # Default recipient
+}

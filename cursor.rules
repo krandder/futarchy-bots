@@ -1,0 +1,13 @@
+futarchy:
+  description: For all futarchy tasks
+  rules: |
+    1. Use https://gnosis-mainnet.public.blastapi.io as the primary RPC endpoint
+    2. Ensure these packages are installed with correct versions:
+       - web3==6.20.4
+       - python-dotenv==1.0.0
+       - requests==2.32.3
+       - urllib3==2.3.0
+       - pyOpenSSL==25.0.0
+       - cryptography==44.0.2
+    3. The SushiSwap router address should be set to the Uniswap V3 Router: 0xE592427A0AEce92De3Edee1F18E0157C05861564
+  glob: "**/*.py" 
