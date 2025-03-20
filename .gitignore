@@ -7,3 +7,14 @@ venv/
 env/
 *.egg-info/
 *.egg-info/*
+
+# Temporary files
+*_temp.py
+passthrough_router_swap_temp.py
+
+# Environment files
+.env.*
+.env
+
+# Verification files
+verify_key.py

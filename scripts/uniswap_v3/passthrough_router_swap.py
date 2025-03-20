@@ -20,7 +20,8 @@ from config.constants import (
     CONTRACT_ADDRESSES, TOKEN_CONFIG, DEFAULT_SWAP_CONFIG, ERC20_ABI
 )
 
-load_dotenv()
+# Load .env file but don't override existing environment variables
+load_dotenv(override=False)  # This ensures command-line vars take precedence
 
 DEBUG = True
 
@@ -85,14 +86,14 @@ def main():
     # 3. Define contract addresses (update as needed)
     #    - Must match the deployed UniswapV3PassthroughRouter for which you are owner
     UNISWAP_V3_PASSTHROUGH_ROUTER_ADDRESS = w3.to_checksum_address(os.getenv("V3_PASSTHROUGH_ROUTER_ADDRESS", "0x77DBE0441C950cE9C97a5F9A79CF316947aAa578"))
-    # Updated pool address from the provided parameters (pool NO)
-    UNISWAP_V3_POOL_ADDRESS = w3.to_checksum_address(os.getenv("UNISWAP_V3_POOL_ADDRESS", "0x6E33153115Ab58dab0e0F1E3a2ccda6e67FA5cD7"))
+    # Updated pool address for YES pool
+    UNISWAP_V3_POOL_ADDRESS = w3.to_checksum_address(os.getenv("POOL_YES_ADDRESS", "0x9a14d28909f42823ee29847f87a15fb3b6e8aed3"))
     # Default recipient address
-    RECIPIENT_ADDRESS = w3.to_checksum_address(os.getenv("RECIPIENT_ADDRESS", "0x33A0b5d7DA5314594D2C163D448030b9F1cADcb2"))
+    RECIPIENT_ADDRESS = owner_address  # Use our own address as recipient
     
-    # Use NO_SDAI and NO_GNO tokens 
-    TOKEN_IN_ADDRESS = w3.to_checksum_address(os.getenv("TOKEN_IN_ADDRESS", TOKEN_CONFIG["currency"]["no_address"]))  # NO_SDAI
-    TOKEN_OUT_ADDRESS = w3.to_checksum_address(os.getenv("TOKEN_OUT_ADDRESS", TOKEN_CONFIG["company"]["no_address"])) # NO_GNO
+    # Use SDAI YES and GNO YES tokens
+    TOKEN_IN_ADDRESS = w3.to_checksum_address(os.getenv("SDAI_YES_ADDRESS", "0x493A0D1c776f8797297Aa8B34594fBd0A7F8968a"))  # SDAI YES
+    TOKEN_OUT_ADDRESS = w3.to_checksum_address(os.getenv("GNO_YES_ADDRESS", "0x177304d505eCA60E1aE0dAF1bba4A4c4181dB8Ad"))  # GNO YES
 
     # 4. ABIs
     # Passthrough Router ABI (interface definition). Ensure it matches your deployed version.
@@ -139,21 +140,19 @@ def main():
     token_in_balance = token_in_contract.functions.balanceOf(owner_address).call()
     token_out_balance_before = token_out_contract.functions.balanceOf(owner_address).call()
     
-    # Update token names to reflect NO tokens
-    token_in_symbol = "NO_SDAI" if TOKEN_IN_ADDRESS.lower() == TOKEN_CONFIG["currency"]["no_address"].lower() else "TOKEN_IN"
-    token_out_symbol = "NO_GNO" if TOKEN_OUT_ADDRESS.lower() == TOKEN_CONFIG["company"]["no_address"].lower() else "TOKEN_OUT"
+    # Update token names to reflect YES tokens
+    token_in_symbol = "SDAI YES" if TOKEN_IN_ADDRESS.lower() == TOKEN_CONFIG["currency"]["yes_address"].lower() else "TOKEN_IN"
+    token_out_symbol = "GNO YES" if TOKEN_OUT_ADDRESS.lower() == TOKEN_CONFIG["company"]["yes_address"].lower() else "TOKEN_OUT"
     
     print(f"💰 {w3.from_wei(token_in_balance, 'ether')} {token_in_symbol} balance")
     print(f"💰 {w3.from_wei(token_out_balance_before, 'ether')} {token_out_symbol} balance before swap")
 
     # 7. Decide how much to swap; ensure you have enough balance
-    # Updated amount from the provided parameters (1.0 ETH in wei)
-    amount_in_wei = int(os.getenv("AMOUNT_TO_SWAP_WEI", "1000000000000000000"))
-    # Allow for decimal input as well
-    if os.getenv("AMOUNT_TO_SWAP"):
-        amount_in_wei = w3.to_wei(float(os.getenv("AMOUNT_TO_SWAP")), "ether")
+    # Command-line override takes precedence over .env
+    amount = float(os.environ.get("AMOUNT_TO_SWAP", "0.001"))  # Use os.environ.get instead of os.getenv
+    amount_in_wei = w3.to_wei(amount, 'ether')
     
-    print(f"🔄 Swap amount: {w3.from_wei(amount_in_wei, 'ether')} {token_in_symbol}")
+    print(f"🔄 Swap amount: {amount} {token_in_symbol}")
     
     if token_in_balance < amount_in_wei:
         print(f"❌ Insufficient {token_in_symbol} balance.")
@@ -199,9 +198,10 @@ def main():
 
     # 9. Perform the swap
     # For a normal "exact input" swap, amountSpecified > 0. 
-    # Updated parameters from the provided data
-    zero_for_one = True  # From the provided parameters
-    sqrt_price_limit_x96 = 4295128740  # From the provided parameters
+    # Updated parameters for SDAI YES to GNO YES swap
+    zero_for_one = False  # SDAI YES (token1) to GNO YES (token0)
+    # Use a higher price limit for zero_for_one=False (higher than current)
+    sqrt_price_limit_x96 = int(974062921369258046699441232588 * 1.2)  # 120% of current price
 
     # Double check that your address is indeed the router's owner
     router_owner = router_contract.functions.owner().call()
@@ -266,7 +266,7 @@ def main():
         ).build_transaction({
             "from": owner_address,
             "nonce": nonce,
-            "gas": 500000,  # adjust as needed
+            "gas": 1000000,  # Increase gas limit
             "maxFeePerGas": w3.eth.gas_price * 2,
             "maxPriorityFeePerGas": w3.eth.gas_price,
             "chainId": w3.eth.chain_id,

@@ -36,8 +36,14 @@ def main():
     # Execute the swap
     print(f"\nSwapping {args.amount} GNO NO for sDAI YES...")
     
-    # token_type='company' means GNO, is_buy=False means selling GNO tokens, is_yes_token=False means NO tokens
-    result = bot.execute_swap(token_type='company', is_buy=False, amount=args.amount, is_yes_token=False)
+    # Get token addresses
+    token_in = TOKEN_CONFIG["company"]["no_address"]  # GNO NO
+    token_out = TOKEN_CONFIG["currency"]["yes_address"]  # SDAI YES
+    
+    # Convert amount to Wei
+    amount_wei = bot.w3.to_wei(args.amount, 'ether')
+    
+    result = bot.execute_swap(token_in=token_in, token_out=token_out, amount=amount_wei)
     
     if result:
         print(f"\n✅ GNO NO to sDAI YES swap test completed successfully")

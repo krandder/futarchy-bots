@@ -172,7 +172,15 @@ class PassthroughRouter:
             print(f"💰 Current balance: {self.w3.from_wei(token_in_balance, 'ether')} tokens")
             print(f"💰 Required amount: {amount} tokens")
             
-            if token_in_balance < amount_wei:
+            # If the difference between balance and requested amount is very small (< 0.0001 tokens),
+            # use the entire balance instead
+            balance_diff = abs(token_in_balance - amount_wei)
+            if token_in_balance < amount_wei and balance_diff < self.w3.to_wei(0.0001, 'ether'):
+                print(f"⚠️ Available balance is slightly less than requested. Using entire balance instead.")
+                amount_wei = token_in_balance
+                amount = float(self.w3.from_wei(amount_wei, 'ether'))
+                print(f"💰 Updated amount: {amount} tokens")
+            elif token_in_balance < amount_wei:
                 print("❌ Insufficient balance")
                 return False
             
