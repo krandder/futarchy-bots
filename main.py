@@ -20,10 +20,14 @@ from config.constants import (
     POOL_CONFIG_NO,
     BALANCER_CONFIG,
     DEFAULT_SWAP_CONFIG,
-    DEFAULT_PERMIT_CONFIG
+    DEFAULT_PERMIT_CONFIG,
+    DEFAULT_RPC_URLS,
+    UNISWAP_V3_POOL_ABI,
+    UNISWAP_V3_PASSTHROUGH_ROUTER_ABI
 )
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
+import math
 
 # Add the current directory to the path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
@@ -106,6 +110,10 @@ def parse_args():
     # Add sell_sdai_yes command
     sell_sdai_yes_parser = subparsers.add_parser('sell_sdai_yes', help='Sell sDAI-YES tokens for sDAI')
     sell_sdai_yes_parser.add_argument('amount', type=float, help='Amount of sDAI-YES to sell')
+    
+    # Add buy_sdai_yes command
+    buy_sdai_yes_parser = subparsers.add_parser('buy_sdai_yes', help='Buy sDAI-YES tokens with sDAI using the dedicated sDAI/sDAI-YES pool')
+    buy_sdai_yes_parser.add_argument('amount', type=float, help='Amount of sDAI to spend')
     
     # Add debug command
     debug_parser = subparsers.add_parser('debug', help='Run in debug mode with additional output')
@@ -275,6 +283,8 @@ def main():
     
     elif args.command == 'sell_sdai_yes':
         sell_sdai_yes(bot, args.amount)
+    elif args.command == 'buy_sdai_yes':
+        buy_sdai_yes(bot, args.amount)
     
     elif args.command == 'swap_gno_yes_to_sdai_yes':
         # In YES pool: GNO is token0, so GNO->SDAI is zero_for_one=true
@@ -586,10 +596,6 @@ def sell_sdai_yes(bot, amount):
             print(f"\nEffective price: {effective_price:.6f} sDAI per sDAI-YES ({effective_percent:.2f}%)")
             print(f"Current pool price ratio: {event_probability:.6f} ({event_percent:.2f}%)")
             
-            if effective_price > 1.0:
-                print(f"❗ Price exceeds 100%! This means you get MORE sDAI than the sDAI-YES you sell.")
-                print(f"   This indicates a market anomaly, as conditional tokens should not exceed 100%.")
-            
             price_diff_pct = ((effective_price / event_probability) - 1) * 100
             print(f"Price difference from pool: {price_diff_pct:.2f}%")
         
@@ -597,6 +603,268 @@ def sell_sdai_yes(bot, amount):
         bot.print_balances(updated_balances)
     else:
         print("❌ Swap failed!")
+
+def buy_sdai_yes(bot, amount_in_sdai):
+    """
+    Buy sDAI-YES tokens using sDAI directly from the sDAI/sDAI-YES pool.
+    
+    Args:
+        bot: FutarchyBot instance
+        amount_in_sdai (float): Amount of sDAI to use for buying sDAI-YES
+    """
+    def floor_to_6(num):
+        # Convert decimal to float if needed
+        if hasattr(num, 'is_finite') and num.is_finite():  # Check if it's a Decimal
+            num = float(num)
+        return math.floor(num * 1e6) / 1e6
+    
+    # Convert to float to ensure proper calculation
+    amount_in_sdai = float(amount_in_sdai)
+    
+    print(f"\n🔄 Buying sDAI-YES with {amount_in_sdai:.6f} sDAI...")
+    
+    # Get token balances before swap
+    balances = bot.get_balances()
+    sdai_balance = balances['currency']['wallet']
+    sdai_yes_balance = balances['currency']['yes']
+    print("Balance before swap:")
+    print(f"sDAI-YES: {sdai_yes_balance}")
+    print(f"sDAI: {sdai_balance}")
+    
+    # Check if user has enough sDAI
+    if sdai_balance < amount_in_sdai:
+        print(f"❌ Insufficient sDAI balance. You have {sdai_balance} sDAI, but need {amount_in_sdai} sDAI.")
+        return
+    
+    # Get pool address from constants
+    pool_address = CONTRACT_ADDRESSES["sdaiYesPool"]
+    print(f"Using sDAI/sDAI-YES pool: {pool_address}")
+    
+    # Get account address
+    account = bot.account.address
+    
+    # Initialize the router with Web3
+    router_address = CONTRACT_ADDRESSES["uniswapV3PassthroughRouter"]
+    router = bot.w3.eth.contract(
+        address=bot.w3.to_checksum_address(router_address),
+        abi=UNISWAP_V3_PASSTHROUGH_ROUTER_ABI
+    )
+    print(f"Using router: {router_address}")
+    
+    # Get the pool contract
+    pool_contract = bot.w3.eth.contract(
+        address=bot.w3.to_checksum_address(pool_address),
+        abi=UNISWAP_V3_POOL_ABI
+    )
+    
+    # Get token0 and token1 addresses
+    token0_address = bot.w3.to_checksum_address(pool_contract.functions.token0().call())
+    token1_address = bot.w3.to_checksum_address(pool_contract.functions.token1().call())
+    print(f"Pool token0: {token0_address}")
+    print(f"Pool token1: {token1_address}")
+    
+    # Get sDAI and sDAI-YES addresses
+    sdai_address = bot.w3.to_checksum_address(TOKEN_CONFIG["currency"]["address"]) 
+    sdai_yes_address = bot.w3.to_checksum_address(TOKEN_CONFIG["currency"]["yes_address"])
+    print(f"sDAI address: {sdai_address}")
+    print(f"sDAI-YES address: {sdai_yes_address}")
+    
+    # Determine if sDAI-YES is token0 or token1
+    if token0_address.lower() == sdai_yes_address.lower() and token1_address.lower() == sdai_address.lower():
+        # sDAI-YES is token0, sDAI is token1
+        zero_for_one = False  # We're swapping token1 for token0
+        print("sDAI-YES is token0, sDAI is token1 => using zero_for_one=FALSE to buy sDAI-YES with sDAI")
+    elif token0_address.lower() == sdai_address.lower() and token1_address.lower() == sdai_yes_address.lower():
+        # sDAI is token0, sDAI-YES is token1
+        zero_for_one = True  # We're swapping token0 for token1
+        print("sDAI is token0, sDAI-YES is token1 => using zero_for_one=TRUE to buy sDAI-YES with sDAI")
+    else:
+        print(f"❌ Pool does not contain the expected tokens.")
+        print(f"Expected tokens: sDAI ({sdai_address}) and sDAI-YES ({sdai_yes_address})")
+        print(f"Pool tokens: token0 ({token0_address}) and token1 ({token1_address})")
+        return
+    
+    try:
+        # Get current sqrtPriceX96
+        slot0 = pool_contract.functions.slot0().call()
+        current_sqrt_price_x96 = slot0[0]
+        print(f"Current pool sqrtPriceX96: {current_sqrt_price_x96}")
+        
+        # Set price limit based on direction
+        if zero_for_one:
+            # If swapping token0 for token1, we set a lower price limit (minimum we accept)
+            # We accept a price 20% lower than current
+            price_limit = int(current_sqrt_price_x96 * 0.8)
+        else:
+            # If swapping token1 for token0, we set a higher price limit (maximum we will pay)
+            # We accept a price 20% higher than current
+            price_limit = int(current_sqrt_price_x96 * 1.2)
+        
+        print(f"Using price limit of {'80%' if zero_for_one else '120%'} of current price: {price_limit}")
+        
+        # First we need to authorize the pool for the router (if not already authorized)
+        print(f"\n🔑 Authorizing pool for router...")
+        
+        try:
+            tx = router.functions.authorizePool(pool_address).build_transaction({
+                'from': account,
+                'gas': 500000,
+                'gasPrice': bot.w3.eth.gas_price,
+                'nonce': bot.w3.eth.get_transaction_count(account),
+                'chainId': bot.w3.eth.chain_id,
+            })
+            
+            signed_tx = bot.account.sign_transaction(tx)
+            tx_hash = bot.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            receipt = bot.w3.eth.wait_for_transaction_receipt(tx_hash)
+            
+            if receipt.status == 1:
+                print(f"✅ Pool authorization successful!")
+            else:
+                print(f"⚠️ Pool authorization failed. But this may be because it's already authorized.")
+        except Exception as e:
+            print(f"⚠️ Pool authorization error: {e}. But we'll continue as it might already be authorized.")
+        
+        # First test with a small amount
+        test_amount = min(amount_in_sdai * 0.1, 1e-5)
+        print(f"\n🧪 Testing with small amount ({test_amount} sDAI) first...")
+        
+        # Convert to wei
+        test_amount_wei = bot.w3.to_wei(test_amount, 'ether')
+        
+        # For the swap function, we need to approve the token we're spending
+        # We need to approve the router to spend our token, not the pool
+        try:
+            if zero_for_one:
+                # If zero_for_one is True, we're selling token0 (sDAI) to buy token1 (sDAI-YES)
+                bot.approve_token(sdai_address, router_address, test_amount_wei)
+            else:
+                # If zero_for_one is False, we're selling token1 (sDAI) to buy token0 (sDAI-YES)
+                bot.approve_token(sdai_address, router_address, test_amount_wei)
+        except Exception as e:
+            print(f"⚠️ Error in token approval: {e}")
+            print("Continuing anyway as it might be approved already...")
+        
+        # The amountSpecified parameter is positive for exact input, negative for exact output
+        # We're doing exact input, so it's positive
+        amount_specified = test_amount_wei
+        
+        # Empty bytes for the data parameter
+        empty_bytes = b''
+        
+        # Execute the test swap
+        tx = router.functions.swap(
+            pool_address,             # pool
+            account,                  # recipient
+            zero_for_one,             # zeroForOne
+            amount_specified,         # amountSpecified
+            price_limit,              # sqrtPriceLimitX96
+            empty_bytes               # data
+        ).build_transaction({
+            'from': account,
+            'gas': 500000,
+            'gasPrice': bot.w3.eth.gas_price,
+            'nonce': bot.w3.eth.get_transaction_count(account),
+            'chainId': bot.w3.eth.chain_id,
+        })
+        
+        # Sign and send transaction using bot's account
+        signed_tx = bot.account.sign_transaction(tx)
+        tx_hash = bot.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        receipt = bot.w3.eth.wait_for_transaction_receipt(tx_hash)
+        
+        if receipt.status == 1:
+            print(f"✅ Test swap successful!")
+        else:
+            print(f"❌ Test swap failed. See transaction for details.")
+            return
+        
+        # Now do the actual swap with the full amount
+        print(f"\n💱 Executing swap with {amount_in_sdai} sDAI...")
+        
+        # Convert to wei
+        amount_wei = bot.w3.to_wei(amount_in_sdai, 'ether')
+        
+        # Approve the tokens again for the full amount
+        try:
+            if zero_for_one:
+                bot.approve_token(sdai_address, router_address, amount_wei)
+            else:
+                bot.approve_token(sdai_address, router_address, amount_wei)
+        except Exception as e:
+            print(f"⚠️ Error in token approval: {e}")
+            print("Continuing anyway as it might be approved already...")
+        
+        # Execute the swap
+        tx = router.functions.swap(
+            pool_address,             # pool
+            account,                  # recipient
+            zero_for_one,             # zeroForOne
+            amount_wei,               # amountSpecified
+            price_limit,              # sqrtPriceLimitX96
+            empty_bytes               # data
+        ).build_transaction({
+            'from': account,
+            'gas': 500000,
+            'gasPrice': bot.w3.eth.gas_price,
+            'nonce': bot.w3.eth.get_transaction_count(account),
+            'chainId': bot.w3.eth.chain_id,
+        })
+        
+        # Sign and send transaction using bot's account
+        signed_tx = bot.account.sign_transaction(tx)
+        tx_hash = bot.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        receipt = bot.w3.eth.wait_for_transaction_receipt(tx_hash)
+        
+        if receipt.status == 1:
+            print(f"✅ Swap successful!")
+            print(f"Transaction hash: {tx_hash.hex()}")
+
+            try:
+                # Get tokens after swap
+                updated_balances = bot.get_balances()
+                new_sdai_balance = updated_balances['currency']['wallet']
+                new_sdai_yes_balance = updated_balances['currency']['yes']
+                
+                # Convert to float if they are Decimal objects
+                sdai_balance_float = float(sdai_balance)
+                new_sdai_balance_float = float(new_sdai_balance)
+                sdai_yes_balance_float = float(sdai_yes_balance)
+                new_sdai_yes_balance_float = float(new_sdai_yes_balance)
+                
+                sdai_spent = floor_to_6(sdai_balance_float - new_sdai_balance_float)
+                sdai_yes_gained = floor_to_6(new_sdai_yes_balance_float - sdai_yes_balance_float)
+                
+                print("\n📊 Swap Summary:")
+                print(f"sDAI spent: {sdai_spent}")
+                print(f"sDAI-YES gained: {sdai_yes_gained}")
+                
+                if sdai_spent > 0 and sdai_yes_gained > 0:
+                    effective_price = sdai_spent / sdai_yes_gained
+                    print(f"Effective price: {effective_price:.6f} sDAI per sDAI-YES")
+                else:
+                    print("Effective price: Unable to calculate (no sDAI spent or no sDAI-YES gained)")
+                    
+                # Get the probability from the pool
+                probability = bot.get_sdai_yes_probability()
+                print(f"Current pool price ratio: {probability:.6f}")
+                
+                # Show updated balances
+                bot.print_balances(updated_balances)
+                return True
+            except Exception as e:
+                print(f"⚠️ Error calculating swap summary: {e}")
+                print("But the swap was successful!")
+                return True
+        else:
+            print(f"❌ Swap failed. See transaction for details.")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error during swap: {e}")
+        print(f"❌ Test swap failed. The pool may have low liquidity or the parameters are incorrect.")
+        print(f"Consider using the split_sdai command to split sDAI into YES/NO tokens at 1:1 ratio.")
+        return False
 
 if __name__ == "__main__":
     main()
