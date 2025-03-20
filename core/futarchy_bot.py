@@ -506,8 +506,8 @@ class FutarchyBot(BaseBot):
         wagno_price = self.get_wagno_sdai_price()
         wagno_gno_ratio = self.get_wagno_gno_ratio()
                 
-        # Get spot GNO price, calculated as waGNO price / waGNO to GNO ratio
-        gno_price = wagno_price / wagno_gno_ratio if wagno_gno_ratio != 0 else 0
+        # Get spot GNO price, calculated as waGNO price * waGNO to GNO ratio
+        gno_price = wagno_price * wagno_gno_ratio if wagno_gno_ratio != 0 else 0
         
         # Calculate synthetic price using capped probability for calculations
         synthetic_price = (yes_price * probability) + (no_price * (1 - probability))
@@ -611,7 +611,7 @@ class FutarchyBot(BaseBot):
         print(f"NO GNO Price: {prices['no_price']:.6f} sDAI")
         print(f"waGNO Spot Price: {prices['wagno_price']:.6f} sDAI")
         print(f"waGNO/GNO Ratio: {prices['wagno_gno_ratio']:.6f} (1 GNO = {prices['wagno_gno_ratio']:.6f} waGNO)")
-        print(f"GNO Spot Price (sDAI): {prices['gno_price']:.6f} (calculated as waGNO price / waGNO-GNO ratio)")
+        print(f"GNO Spot Price (sDAI): {prices['gno_price']:.6f} (calculated as waGNO price * waGNO-GNO ratio)")
         
         # Show the raw and capped price ratios
         raw_ratio = prices.get('raw_probability', prices['probability'])
