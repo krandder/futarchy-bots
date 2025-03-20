@@ -198,6 +198,68 @@ class FutarchyBot(BaseBot):
             print(f"❌ Error calculating YES token price ratio: {e}")
             return 0.5  # Default to 50% if calculation fails
     
+    def get_token_price(self, token_in_address, token_out_address):
+        """
+        Get the price of token_in in terms of token_out.
+        
+        Args:
+            token_in_address: Address of the input token
+            token_out_address: Address of the output token
+            
+        Returns:
+            float: Price of token_in in terms of token_out
+        """
+        try:
+            # Determine which pool to use based on the tokens
+            # For GNO YES/NO tokens with sDAI YES/NO tokens, we need to use the appropriate pool
+            if token_in_address.lower() == TOKEN_CONFIG["company"]["yes_address"].lower() and token_out_address.lower() == TOKEN_CONFIG["currency"]["yes_address"].lower():
+                # GNO YES to sDAI YES - use YES pool
+                pool_address = POOL_CONFIG_YES["address"]
+            elif token_in_address.lower() == TOKEN_CONFIG["company"]["no_address"].lower() and token_out_address.lower() == TOKEN_CONFIG["currency"]["no_address"].lower():
+                # GNO NO to sDAI NO - use NO pool
+                pool_address = POOL_CONFIG_NO["address"]
+            else:
+                # For other cases (outside our standard pools), we'd need a more general solution
+                print(f"⚠️ No supported pool found for {token_in_address} to {token_out_address}")
+                # If we're looking for GNO/sDAI price, use cowswap price
+                if (token_in_address.lower() == TOKEN_CONFIG["company"]["address"].lower() and 
+                    token_out_address.lower() == TOKEN_CONFIG["currency"]["address"].lower()):
+                    return self.get_gno_sdai_price()
+                return 0
+                
+            # Get the pool contract
+            pool = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(pool_address),
+                abi=UNISWAP_V3_POOL_ABI
+            )
+            
+            # Get current price from slot0
+            slot0 = pool.functions.slot0().call()
+            sqrt_price_x96 = int(slot0[0])
+            
+            # Calculate raw price from sqrtPriceX96
+            raw_price = (sqrt_price_x96 ** 2) / (2 ** 192)
+            
+            # Get token order to determine if we need to invert
+            token0 = pool.functions.token0().call().lower()
+            token_in_lower = token_in_address.lower()
+            
+            # Determine token order and calculate price
+            if token0 == token_in_lower:
+                # token_in is token0, token_out is token1
+                # Price of token1 in terms of token0
+                price = raw_price
+            else:
+                # token_in is token1, token_out is token0
+                # Price of token0 in terms of token1
+                price = 1 / raw_price
+                
+            return price
+            
+        except Exception as e:
+            print(f"❌ Error getting token price: {e}")
+            return 0  # Default to 0 if calculation fails
+    
     def get_sdai_yes_probability(self):
         """
         Calculate the raw price ratio between sDAI-YES and sDAI.
@@ -256,8 +318,14 @@ class FutarchyBot(BaseBot):
         Returns:
             dict: Market prices and probabilities
         """
-        # Get probability from the YES token price ratio
-        probability = self.get_yes_token_price_ratio()
+        # Get probability from the sDAI-YES/sDAI price ratio
+        sdai_yes_ratio = self.get_sdai_yes_probability()
+        
+        # If the ratio is greater than 1, it means sDAI-YES is worth more than sDAI
+        # The probability is capped at 100% for display, but we keep the actual ratio
+        # for calculation purposes
+        probability = min(1.0, sdai_yes_ratio) if sdai_yes_ratio is not None else 0.5
+        raw_probability = sdai_yes_ratio if sdai_yes_ratio is not None else 0.5
         
         # Get YES GNO price
         yes_price = self.get_token_price(TOKEN_CONFIG["company"]["yes_address"], 
@@ -270,7 +338,7 @@ class FutarchyBot(BaseBot):
         # Get spot GNO price from CoW Swap
         gno_price = self.get_gno_sdai_price()
         
-        # Calculate synthetic price
+        # Calculate synthetic price using capped probability for calculations
         synthetic_price = (yes_price * probability) + (no_price * (1 - probability))
         
         return {
@@ -278,6 +346,7 @@ class FutarchyBot(BaseBot):
             "no_price": no_price,
             "gno_price": gno_price,
             "probability": probability,
+            "raw_probability": raw_probability,  # Include the raw ratio
             "synthetic_price": synthetic_price
         }
     
@@ -290,18 +359,9 @@ class FutarchyBot(BaseBot):
         Returns:
             tuple: (synthetic_price, spot_price)
         """
-        # Get market prices
         prices = self.get_market_prices()
-        
-        # Extract values
-        yes_price = prices.get('yes_price', 0)
-        no_price = prices.get('no_price', 0)
+        synthetic_price = prices.get('synthetic_price', 0)
         spot_price = prices.get('gno_price', 0)
-        probability = prices.get('probability', 0.5)
-        
-        # Calculate synthetic price
-        synthetic_price = (yes_price * probability) + (no_price * (1 - probability))
-        
         return synthetic_price, spot_price
     
     def get_gno_sdai_price(self):
@@ -378,33 +438,34 @@ class FutarchyBot(BaseBot):
         print(f"NO GNO Price: {prices['no_price']:.6f} sDAI")
         print(f"GNO Spot Price (sDAI): {prices['gno_price']:.6f}")
         
-        # Show the raw price ratio as a percentage (can exceed 100%)
-        ratio_percent = prices['probability'] * 100
-        print(f"Event Probability: {prices['probability']:.6f} ({ratio_percent:.2f}%)")
+        # Show the raw and capped price ratios
+        raw_ratio = prices.get('raw_probability', prices['probability'])
+        raw_percent = raw_ratio * 100
+        capped_percent = prices['probability'] * 100
         
-        if ratio_percent > 100:
-            print(f"⚠️ NOTE: Ratio exceeds 100%, which means sDAI-YES is trading above the price of sDAI!")
-            print(f"This is a market anomaly - you can sell 1 sDAI-YES for {prices['probability']:.6f} sDAI.")
+        if raw_ratio > 1.0:
+            print(f"sDAI-YES/sDAI Price Ratio: {raw_ratio:.6f} ({raw_percent:.2f}%)")
+            print(f"Event Probability (capped): {prices['probability']:.6f} ({capped_percent:.2f}%)")
+            print(f"⚠️ NOTE: Price ratio exceeds 1.0, which means sDAI-YES is trading above the price of sDAI!")
+            print(f"This is a market anomaly - you can sell 1 sDAI-YES for {raw_ratio:.6f} sDAI.")
+        else:
+            print(f"Event Probability: {prices['probability']:.6f} ({capped_percent:.2f}%)")
+            print(f"sDAI-YES/sDAI Price Ratio: {raw_ratio:.6f}")
         
-        # For synthetic price calculation, we need to cap the probability at 1.0
-        calc_probability = min(1.0, prices['probability'])
+        # For synthetic price calculation, we use the capped probability
+        calc_probability = prices['probability']
         
         # Print synthetic price with calculation explanation
         print("\n=== Synthetic Price Calculation ===")
         print(f"Synthetic GNO Price: {prices['synthetic_price']:.6f} sDAI")
         
-        if prices['probability'] > 1.0:
-            print("⚠️ For calculation purposes, probability was capped at 100% in the formula below:")
-            print(f"Formula: (YES_price * probability) + (NO_price * (1 - probability))")
-            print(f"       = ({prices['yes_price']:.6f} * {calc_probability:.4f}) + ({prices['no_price']:.6f} * {1 - calc_probability:.4f})")
-            print(f"       = {prices['yes_price'] * calc_probability:.6f} + {prices['no_price'] * (1 - calc_probability):.6f}")
-            print(f"       = {prices['synthetic_price']:.6f} sDAI")
-            print(f"NOTE: Actual raw ratio from pool is {prices['probability']:.6f} ({ratio_percent:.2f}%), which is > 100%")
-        else:
-            print(f"Formula: (YES_price * probability) + (NO_price * (1 - probability))")
-            print(f"       = ({prices['yes_price']:.6f} * {prices['probability']:.4f}) + ({prices['no_price']:.6f} * {1 - prices['probability']:.4f})")
-            print(f"       = {prices['yes_price'] * prices['probability']:.6f} + {prices['no_price'] * (1 - prices['probability']):.6f}")
-            print(f"       = {prices['synthetic_price']:.6f} sDAI")
+        if raw_ratio > 1.0:
+            print("⚠️ For calculation purposes, probability was capped at 100%")
+            
+        print(f"Formula: (YES_price * probability) + (NO_price * (1 - probability))")
+        print(f"       = ({prices['yes_price']:.6f} * {calc_probability:.4f}) + ({prices['no_price']:.6f} * {1 - calc_probability:.4f})")
+        print(f"       = {prices['yes_price'] * calc_probability:.6f} + {prices['no_price'] * (1 - calc_probability):.6f}")
+        print(f"       = {prices['synthetic_price']:.6f} sDAI")
         
         # Calculate and show potential arbitrage
         if prices['gno_price'] > 0:  # Avoid division by zero

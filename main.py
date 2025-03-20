@@ -91,10 +91,10 @@ def parse_args():
     swap_gno_no_parser = subparsers.add_parser('swap_gno_no', help='Swap GNO NO to sDAI NO')
     swap_gno_no_parser.add_argument('amount', type=float, help='Amount of GNO NO to swap')
     
-    # Add the arbitrage synthetic GNO command
-    arbitrage_synthetic_gno_parser = subparsers.add_parser('arbitrage_synthetic_gno', 
-                                help='Execute full arbitrage: buy GNO spot → split → sell YES/NO → merge')
-    arbitrage_synthetic_gno_parser.add_argument('amount', type=float, help='Amount of sDAI to use for arbitrage')
+    # Add the arbitrage synthetic GNO command (sell direction)
+    arbitrage_sell_synthetic_gno_parser = subparsers.add_parser('arbitrage_sell_synthetic_gno', 
+                                help='Execute full arbitrage: buy GNO spot → split → sell YES/NO → balance & merge')
+    arbitrage_sell_synthetic_gno_parser.add_argument('amount', type=float, help='Amount of sDAI to use for arbitrage')
     
     # Add the four new passthrough router swap commands
     swap_gno_yes_to_sdai_yes_parser = subparsers.add_parser('swap_gno_yes_to_sdai_yes', help='Swap GNO YES to sDAI YES using passthrough router')
@@ -309,15 +309,30 @@ def main():
         # In YES pool: GNO is token0, so GNO->SDAI is zero_for_one=true
         # Get the current pool price directly from the pool
         pool_address = router.w3.to_checksum_address(POOL_CONFIG_YES["address"])
-        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
-        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        pool_contract = bot.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
         slot0 = pool_contract.functions.slot0().call()
         current_sqrt_price = slot0[0]
         print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
         
-        # For zero_for_one=True (going down in price), use 80% of current price as the limit
-        sqrt_price_limit_x96 = int(current_sqrt_price * 0.8)
-        print(f"Using price limit of 80% of current price: {sqrt_price_limit_x96}")
+        # For zero_for_one=True (going down in price), use 95% of current price as the limit
+        sqrt_price_limit_x96 = int(current_sqrt_price * 0.95)
+        print(f"Using price limit of 95% of current price: {sqrt_price_limit_x96}")
+        
+        # Get the current pool tokens to show the token ordering
+        token0 = pool_contract.functions.token0().call()
+        token1 = pool_contract.functions.token1().call()
+        print(f"Pool token0: {token0}")
+        print(f"Pool token1: {token1}")
+        print(f"sDAI-YES: {TOKEN_CONFIG['currency']['yes_address']}")
+        print(f"sDAI: {TOKEN_CONFIG['currency']['address']}")
+        
+        # Calculate the actual price from sqrtPriceX96
+        price = (current_sqrt_price ** 2) / (2 ** 192)
+        print(f"Current price: {price:.6f} (price of token1 in terms of token0)")
+        if token0.lower() == TOKEN_CONFIG['currency']['yes_address'].lower():
+            print(f"This means 1 sDAI-YES = {price:.6f} sDAI")
+        else:
+            print(f"This means 1 sDAI = {price:.6f} sDAI-YES")
         
         result = router.execute_swap(
             pool_address=pool_address,
@@ -335,8 +350,7 @@ def main():
         # In YES pool: GNO is token0, so SDAI->GNO is zero_for_one=false
         # Get the current pool price directly from the pool
         pool_address = router.w3.to_checksum_address(POOL_CONFIG_YES["address"])
-        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
-        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        pool_contract = bot.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
         slot0 = pool_contract.functions.slot0().call()
         current_sqrt_price = slot0[0]
         print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
@@ -361,8 +375,7 @@ def main():
         # In NO pool: SDAI is token0, so GNO->SDAI is zero_for_one=false
         # Get the current pool price directly from the pool
         pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
-        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
-        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        pool_contract = bot.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
         slot0 = pool_contract.functions.slot0().call()
         current_sqrt_price = slot0[0]
         print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
@@ -387,8 +400,7 @@ def main():
         # In NO pool: SDAI is token0, so SDAI->GNO is zero_for_one=true
         # Get the current pool price directly from the pool
         pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
-        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
-        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        pool_contract = bot.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
         slot0 = pool_contract.functions.slot0().call()
         current_sqrt_price = slot0[0]
         print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
@@ -418,14 +430,14 @@ def main():
         
         # Get YES pool price
         yes_pool_address = router.w3.to_checksum_address(POOL_CONFIG_YES["address"])
-        yes_pool_contract = router.w3.eth.contract(address=yes_pool_address, abi=pool_abi)
+        yes_pool_contract = bot.w3.eth.contract(address=yes_pool_address, abi=UNISWAP_V3_POOL_ABI)
         yes_slot0 = yes_pool_contract.functions.slot0().call()
         yes_sqrt_price = yes_slot0[0]
         print(f"YES pool current sqrtPriceX96: {yes_sqrt_price}")
         
         # Get NO pool price
         no_pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
-        no_pool_contract = router.w3.eth.contract(address=no_pool_address, abi=pool_abi)
+        no_pool_contract = bot.w3.eth.contract(address=no_pool_address, abi=UNISWAP_V3_POOL_ABI)
         no_slot0 = no_pool_contract.functions.slot0().call()
         no_sqrt_price = no_slot0[0]
         print(f"NO pool current sqrtPriceX96: {no_sqrt_price}")
@@ -515,9 +527,9 @@ def main():
         balances = bot.get_balances()
         bot.print_balances(balances)
     
-    elif args.command == 'arbitrage_synthetic_gno':
+    elif args.command == 'arbitrage_sell_synthetic_gno':
         # This function executes a full arbitrage operation
-        execute_arbitrage_synthetic_gno(bot, args.amount)
+        execute_arbitrage_sell_synthetic_gno(bot, args.amount)
     
     else:
         # Default to showing help
@@ -560,44 +572,73 @@ def sell_sdai_yes(bot, amount):
     print(f"sDAI-YES: {sdai_yes_display:.6f}")
     print(f"sDAI: {sdai_display:.6f}")
     
-    # Get current pool price
-    pool_address = bot.w3.to_checksum_address(POOL_CONFIG_YES["address"])
-    pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
-    pool_contract = bot.w3.eth.contract(address=pool_address, abi=pool_abi)
+    # Get current pool price - use the sdaiYesPool which is specifically for sDAI-YES <-> sDAI swaps
+    pool_address = bot.w3.to_checksum_address(CONTRACT_ADDRESSES["sdaiYesPool"])
+    pool_contract = bot.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
     slot0 = pool_contract.functions.slot0().call()
     current_sqrt_price = slot0[0]
     print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
     
-    # For zero_for_one=True (going down in price), use 80% of current price as the limit
-    sqrt_price_limit_x96 = int(current_sqrt_price * 0.8)
-    print(f"Using price limit of 80% of current price: {sqrt_price_limit_x96}")
+    # Get the current pool tokens to show the token ordering
+    token0 = pool_contract.functions.token0().call()
+    token1 = pool_contract.functions.token1().call()
+    print(f"Pool token0: {token0}")
+    print(f"Pool token1: {token1}")
+    print(f"sDAI-YES: {TOKEN_CONFIG['currency']['yes_address']}")
+    print(f"sDAI: {TOKEN_CONFIG['currency']['address']}")
     
-    # Check balance (display floor-rounded values, compare exact values)
-    print(f"💰 Current balance: {sdai_yes_display:.6f} tokens")
-    print(f"💰 Required amount: {amount:.6f} tokens")
+    # Calculate the actual price from sqrtPriceX96
+    price = (current_sqrt_price ** 2) / (2 ** 192)
+    print(f"Current price: {price:.6f} (price of token1 in terms of token0)")
     
-    if sdai_yes_balance < amount:
-        print("❌ Insufficient balance")
-        print("❌ Swap failed!")
+    # Determine which token is which in the pool
+    sdai_yes_address = TOKEN_CONFIG['currency']['yes_address'].lower()
+    sdai_address = TOKEN_CONFIG['currency']['address'].lower()
+    
+    if token0.lower() == sdai_yes_address and token1.lower() == sdai_address:
+        print(f"Pool order: token0=sDAI-YES, token1=sDAI")
+        print(f"This means 1 sDAI-YES = {1/price:.6f} sDAI")
+        # When selling sDAI-YES (token0) for sDAI (token1), use zero_for_one=True
+        zero_for_one = True
+        # For zero_for_one=True (going down in price), use 95% of current price as the limit
+        sqrt_price_limit_x96 = int(current_sqrt_price * 0.95)
+        print(f"Using price limit of 95% of current price: {sqrt_price_limit_x96}")
+    elif token0.lower() == sdai_address and token1.lower() == sdai_yes_address:
+        print(f"Pool order: token0=sDAI, token1=sDAI-YES")
+        print(f"This means 1 sDAI-YES = {price:.6f} sDAI")
+        # When selling sDAI-YES (token1) for sDAI (token0), use zero_for_one=False
+        zero_for_one = False
+        # For zero_for_one=False (going up in price), use 105% of current price as the limit
+        sqrt_price_limit_x96 = int(current_sqrt_price * 1.05)
+        print(f"Using price limit of 105% of current price: {sqrt_price_limit_x96}")
+    else:
+        print(f"⚠️ Unexpected token configuration in the pool")
         return
     
-    # Execute the swap
+    # Check balance (display floor-rounded values, compare exact values)
+    if float(sdai_yes_balance) < float(amount):
+        print(f"❌ Insufficient balance of sDAI-YES tokens.")
+        print(f"   Required: {amount:.6f}")
+        print(f"   Available: {sdai_yes_display:.6f}")
+        return
+
+    # Execute the swap using PassthroughRouter directly
     router = PassthroughRouter(
         bot.w3,
         os.environ.get("PRIVATE_KEY"),
         os.environ.get("V3_PASSTHROUGH_ROUTER_ADDRESS")
     )
     
-    result = router.execute_swap(
+    success = router.execute_swap(
         pool_address=pool_address,
         token_in=TOKEN_CONFIG["currency"]["yes_address"],
         token_out=TOKEN_CONFIG["currency"]["address"],
         amount=amount,
-        zero_for_one=True,
+        zero_for_one=zero_for_one,
         sqrt_price_limit_x96=sqrt_price_limit_x96
     )
-    
-    if result:
+
+    if success:
         print("✅ Swap successful!")
         
         # Get updated balances
@@ -889,7 +930,7 @@ def buy_sdai_yes(bot, amount_in_sdai):
         print(f"Consider using the split_sdai command to split sDAI into YES/NO tokens at 1:1 ratio.")
         return False
 
-def execute_arbitrage_synthetic_gno(bot, sdai_amount):
+def execute_arbitrage_sell_synthetic_gno(bot, sdai_amount):
     """
     Execute a full arbitrage operation:
     1. Buy waGNO with sDAI
@@ -897,8 +938,11 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
     3. Split GNO into YES/NO tokens
     4. Sell GNO-YES for sDAI-YES
     5. Sell GNO-NO for sDAI-NO
-    6. Merge sDAI-YES and sDAI-NO back into sDAI
-    7. Compare final sDAI amount with initial amount
+    6. Balance YES/NO tokens:
+       - If YES > NO: Sell excess YES for sDAI
+       - If NO > YES: Buy additional YES with sDAI
+    7. Merge sDAI-YES and sDAI-NO back into sDAI
+    8. Compare final sDAI amount with initial amount
     
     Args:
         bot: The FutarchyBot instance
@@ -1050,13 +1094,12 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         
         # Get the current pool price directly from the pool
         pool_address = bot.w3.to_checksum_address(POOL_CONFIG_YES["address"])
-        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
-        pool_contract = bot.w3.eth.contract(address=pool_address, abi=pool_abi)
+        pool_contract = bot.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
         slot0 = pool_contract.functions.slot0().call()
         current_sqrt_price = slot0[0]
         
-        # For zero_for_one=True (going down in price), use 80% of current price as the limit
-        sqrt_price_limit_x96 = int(current_sqrt_price * 0.8)
+        # For zero_for_one=True (going down in price), use 95% of current price as the limit
+        sqrt_price_limit_x96 = int(current_sqrt_price * 0.95)
         
         result = passthrough.execute_swap(
             pool_address=pool_address,
@@ -1094,8 +1137,7 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         
         # Get the current pool price directly from the pool
         pool_address = bot.w3.to_checksum_address(POOL_CONFIG_NO["address"])
-        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
-        pool_contract = bot.w3.eth.contract(address=pool_address, abi=pool_abi)
+        pool_contract = bot.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
         slot0 = pool_contract.functions.slot0().call()
         current_sqrt_price = slot0[0]
         
@@ -1116,11 +1158,12 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         print(f"❌ Error selling GNO-NO: {e}")
         print("⚠️ Continuing with arbitrage despite GNO-NO selling error")
     
-    # Step 6: Merge sDAI-YES and sDAI-NO tokens into sDAI
+    # Step 6: Balance YES/NO tokens before merging
     # Get latest balances after swaps
     post_swap_balances = bot.get_balances()
     sdai_yes_after = float(post_swap_balances['currency']['yes'])
     sdai_no_after = float(post_swap_balances['currency']['no'])
+    sdai_balance = float(post_swap_balances['currency']['wallet'])
     
     # Calculate how much was received
     sdai_yes_received = sdai_yes_after - sdai_yes_before
@@ -1129,10 +1172,69 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
     print(f"\n📊 sDAI-YES received: {sdai_yes_received:.6f}")
     print(f"📊 sDAI-NO received: {sdai_no_received:.6f}")
     
-    # Calculate amount to merge (min of YES and NO to form pairs)
-    merge_amount = min(sdai_yes_after, sdai_no_after)
+    print(f"\n🔹 Step 6: Balancing YES/NO tokens before merging")
+    print(f"Current sDAI-YES: {sdai_yes_after:.6f}")
+    print(f"Current sDAI-NO: {sdai_no_after:.6f}")
     
-    print(f"\n🔹 Step 6: Merging {merge_amount:.6f} pairs of sDAI-YES and sDAI-NO tokens into sDAI")
+    # Check which token we have more of
+    if sdai_yes_after > sdai_no_after:
+        # We have more YES than NO, sell the difference
+        difference = sdai_yes_after - sdai_no_after
+        print(f"We have {difference:.6f} more sDAI-YES than sDAI-NO")
+        print(f"Selling excess sDAI-YES for sDAI...")
+        
+        try:
+            sell_sdai_yes(bot, difference)
+            
+            # Update balances after selling
+            balance_balances = bot.get_balances()
+            sdai_yes_after = float(balance_balances['currency']['yes'])
+            sdai_no_after = float(balance_balances['currency']['no'])
+            
+            print(f"After balancing: sDAI-YES: {sdai_yes_after:.6f}, sDAI-NO: {sdai_no_after:.6f}")
+        except Exception as e:
+            print(f"❌ Error selling excess sDAI-YES: {e}")
+            print("⚠️ Continuing with unbalanced tokens")
+    
+    elif sdai_no_after > sdai_yes_after:
+        # We have more NO than YES, buy some YES with sDAI
+        difference = sdai_no_after - sdai_yes_after
+        print(f"We have {difference:.6f} more sDAI-NO than sDAI-YES")
+        
+        # Check if we have enough sDAI to buy the difference
+        if sdai_balance >= difference:
+            print(f"Buying {difference:.6f} sDAI-YES with sDAI...")
+            
+            try:
+                buy_sdai_yes(bot, difference)
+                
+                # Update balances after buying
+                balance_balances = bot.get_balances()
+                sdai_yes_after = float(balance_balances['currency']['yes'])
+                sdai_no_after = float(balance_balances['currency']['no'])
+                
+                print(f"After balancing: sDAI-YES: {sdai_yes_after:.6f}, sDAI-NO: {sdai_no_after:.6f}")
+            except Exception as e:
+                print(f"❌ Error buying sDAI-YES: {e}")
+                print("⚠️ Continuing with unbalanced tokens")
+        else:
+            print(f"⚠️ Not enough sDAI ({sdai_balance:.6f}) to buy {difference:.6f} sDAI-YES")
+            print("⚠️ Continuing with unbalanced tokens")
+    
+    else:
+        print(f"Tokens are already balanced: {sdai_yes_after:.6f} sDAI-YES = {sdai_no_after:.6f} sDAI-NO")
+    
+    
+    # Step 7: Merge sDAI-YES and sDAI-NO tokens into sDAI
+    # Recalculate merge amount after balancing
+    post_balance_balances = bot.get_balances()
+    sdai_yes_final = float(post_balance_balances['currency']['yes'])
+    sdai_no_final = float(post_balance_balances['currency']['no'])
+    
+    # Calculate amount to merge (min of YES and NO to form pairs)
+    merge_amount = min(sdai_yes_final, sdai_no_final)
+    
+    print(f"\n🔹 Step 7: Merging {merge_amount:.6f} pairs of sDAI-YES and sDAI-NO tokens into sDAI")
     
     if merge_amount > 0:
         try:
@@ -1146,7 +1248,7 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
             print(f"❌ Error merging sDAI tokens: {e}")
             print("⚠️ Continuing to final evaluation despite merging error")
     else:
-        print("\n🔹 Step 6: No tokens to merge (requires equal YES and NO amounts)")
+        print("\n🔹 Step 7: No tokens to merge (requires equal YES and NO amounts)")
     
     # Get final balances and calculate profit/loss
     final_balances = bot.get_balances()
