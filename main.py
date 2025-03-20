@@ -114,14 +114,6 @@ def parse_args():
     test_swaps_parser = subparsers.add_parser('test_swaps', help='Test all swap functions with small amounts')
     test_swaps_parser.add_argument('--amount', type=float, default=0.001, help='Amount to use for testing (default: 0.001)')
     
-    # Add try_sdai_no_to_gno_no command
-    try_sdai_no_swap_parser = subparsers.add_parser('try_sdai_no_to_gno_no', help='Try SDAI NO to GNO NO swap with multiple price limits')
-    try_sdai_no_swap_parser.add_argument('amount', type=float, help='Amount of sDAI NO to swap')
-    
-    # Add try_smaller_amounts command
-    try_amounts_parser = subparsers.add_parser('try_smaller_amounts', help='Try SDAI NO to GNO NO swap with progressively smaller amounts')
-    try_amounts_parser.add_argument('--max_amount', type=float, default=0.001, help='Starting amount for the test (default: 0.001)')
-    
     return parser.parse_args()
 
 def main():
@@ -180,7 +172,7 @@ def main():
         return
     
     # Check if command needs an amount and if it's provided
-    if hasattr(args, 'amount') and not args.amount and args.command not in ['test_swaps', 'try_smaller_amounts']:
+    if hasattr(args, 'amount') and not args.amount and args.command not in ['test_swaps']:
         print("❌ Amount is required for this command")
         return
     
@@ -493,93 +485,6 @@ def main():
         # Show final balances
         balances = bot.get_balances()
         bot.print_balances(balances)
-    
-    elif args.command == 'try_sdai_no_to_gno_no':
-        # Try multiple price limits for SDAI NO to GNO NO swap
-        print("\n🧪 Trying SDAI NO to GNO NO swap with multiple price limits...")
-        
-        # Get the current pool price directly
-        pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
-        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
-        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
-        slot0 = pool_contract.functions.slot0().call()
-        current_sqrt_price = slot0[0]
-        print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
-        
-        # Define a range of price limits to try
-        price_limits = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.01]
-        
-        # Try each price limit
-        for limit_factor in price_limits:
-            print(f"\n\n============================================")
-            print(f"🔄 Trying with price limit factor: {limit_factor} ({limit_factor * 100}% of current price)")
-            print(f"============================================")
-            
-            sqrt_price_limit = int(current_sqrt_price * limit_factor)
-            
-            result = router.execute_swap(
-                pool_address=pool_address,
-                token_in=TOKEN_CONFIG["currency"]["no_address"],
-                token_out=TOKEN_CONFIG["company"]["no_address"],
-                amount=args.amount,
-                zero_for_one=True,
-                sqrt_price_limit_x96=sqrt_price_limit
-            )
-            
-            if result:
-                print(f"✅ Success with price limit factor: {limit_factor}")
-                # Show balances and exit
-                balances = bot.get_balances()
-                bot.print_balances(balances)
-                return
-        
-        print("\n❌ All price limits failed for SDAI NO to GNO NO swap")
-        return
-    
-    elif args.command == 'try_smaller_amounts':
-        # Try progressively smaller amounts for SDAI NO to GNO NO swap
-        print("\n🧪 Trying SDAI NO to GNO NO swap with progressively smaller amounts...")
-        
-        # Get the current pool price directly
-        pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
-        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
-        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
-        slot0 = pool_contract.functions.slot0().call()
-        current_sqrt_price = slot0[0]
-        print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
-        
-        # Use 80% of current price as the price limit
-        sqrt_price_limit = int(current_sqrt_price * 0.8)
-        print(f"Using price limit of 80% of current price: {sqrt_price_limit}")
-        
-        # Define a range of amounts to try (from 0.0001 to max_amount)
-        max_amount = args.max_amount if hasattr(args, 'max_amount') else 0.001
-        amounts = [max_amount, max_amount/2, max_amount/5, max_amount/10, max_amount/20, max_amount/50, max_amount/100]
-        
-        # Try each amount
-        for amount in amounts:
-            print(f"\n\n============================================")
-            print(f"🔄 Trying with amount: {amount} tokens")
-            print(f"============================================")
-            
-            result = router.execute_swap(
-                pool_address=pool_address,
-                token_in=TOKEN_CONFIG["currency"]["no_address"],
-                token_out=TOKEN_CONFIG["company"]["no_address"],
-                amount=amount,
-                zero_for_one=True,
-                sqrt_price_limit_x96=sqrt_price_limit
-            )
-            
-            if result:
-                print(f"✅ Success with amount: {amount} tokens")
-                # Show balances and exit
-                balances = bot.get_balances()
-                bot.print_balances(balances)
-                return
-        
-        print("\n❌ All amounts failed for SDAI NO to GNO NO swap")
-        return
     
     else:
         # Default to showing help
