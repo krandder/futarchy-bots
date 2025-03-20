@@ -943,7 +943,8 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
     
     # Step 3: Split GNO into YES/NO tokens
     print(f"\n🔹 Step 3: Splitting {gno_amount} GNO into YES/NO tokens")
-    if not bot.split_gno(gno_amount):
+    # Using the existing split_gno functionality
+    if not bot.add_collateral('company', gno_amount):
         print("❌ Failed to split GNO. Aborting arbitrage.")
         return
     
@@ -960,36 +961,64 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
     
     # Step 4: Sell GNO-YES for sDAI-YES
     print(f"\n🔹 Step 4: Selling {gno_yes_amount} GNO-YES for sDAI-YES")
-    # Use existing swap_gno_yes_to_sdai_yes command
-    token_in = TOKEN_CONFIG["company"]["yes_address"]  # GNO YES
-    token_out = TOKEN_CONFIG["currency"]["yes_address"]  # sDAI YES
+    # Reuse the existing swap_gno_yes_to_sdai_yes functionality
     
-    # Convert to Wei
-    yes_amount_wei = bot.w3.to_wei(gno_yes_amount, 'ether')
+    # Get the router 
+    router = PassthroughRouter(
+        bot.w3,
+        os.environ.get("PRIVATE_KEY"),
+        os.environ.get("V3_PASSTHROUGH_ROUTER_ADDRESS")
+    )
     
-    # Use the passthrough router for YES tokens
-    try:
-        passthrough = bot.setup_passthrough_router()
-        bot.router_swap_exact_input(
-            passthrough,
-            token_in,
-            token_out,
-            yes_amount_wei,
-            POOL_CONFIG_YES["address"],
-            bot.address,
-            is_zero_for_one=True  # GNO YES -> sDAI YES is swapping token0 for token1
-        )
+    # Get the current pool price directly from the pool
+    pool_address = router.w3.to_checksum_address(POOL_CONFIG_YES["address"])
+    pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+    pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+    slot0 = pool_contract.functions.slot0().call()
+    current_sqrt_price = slot0[0]
+    
+    # For zero_for_one=True (going down in price), use 80% of current price as the limit
+    sqrt_price_limit_x96 = int(current_sqrt_price * 0.8)
+    
+    result = router.execute_swap(
+        pool_address=pool_address,
+        token_in=TOKEN_CONFIG["company"]["yes_address"],
+        token_out=TOKEN_CONFIG["currency"]["yes_address"],
+        amount=gno_yes_amount,
+        zero_for_one=True,
+        sqrt_price_limit_x96=sqrt_price_limit_x96
+    )
+    
+    if result:
         print("✅ Successfully sold GNO-YES tokens for sDAI-YES")
-    except Exception as e:
-        print(f"❌ Error selling GNO-YES: {e}")
-        print("⚠️ Continuing with arbitrage despite GNO-YES selling error")
+    else:
+        print("⚠️ Failed to sell GNO-YES tokens. Continuing with remaining steps.")
     
     # Step 5: Sell GNO-NO for sDAI-NO
     print(f"\n🔹 Step 5: Selling {gno_no_amount} GNO-NO for sDAI-NO")
-    if not bot.swap_token(token_type='company', is_buy=False, amount=gno_no_amount, is_yes_token=False):
-        print("⚠️ Failed to sell GNO-NO tokens. Continuing with remaining steps.")
-    else:
+    
+    # Get the current pool price directly from the pool
+    pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
+    pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+    slot0 = pool_contract.functions.slot0().call()
+    current_sqrt_price = slot0[0]
+    
+    # For zero_for_one=False (going up in price), use 120% of current price as the limit
+    sqrt_price_limit_x96 = int(current_sqrt_price * 1.2)
+    
+    result = router.execute_swap(
+        pool_address=pool_address,
+        token_in=TOKEN_CONFIG["company"]["no_address"],
+        token_out=TOKEN_CONFIG["currency"]["no_address"],
+        amount=gno_no_amount,
+        zero_for_one=False,
+        sqrt_price_limit_x96=sqrt_price_limit_x96
+    )
+    
+    if result:
         print("✅ Successfully sold GNO-NO tokens for sDAI-NO")
+    else:
+        print("⚠️ Failed to sell GNO-NO tokens. Continuing with remaining steps.")
     
     # Check sDAI-YES and sDAI-NO balances for merging
     intermediate_balances = bot.get_balances()
@@ -1002,7 +1031,8 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
     
     if merge_amount > 0:
         print(f"\n🔹 Step 6: Merging {merge_amount} sDAI-YES and sDAI-NO tokens into sDAI")
-        if not bot.merge_sdai_collateral(merge_amount):
+        # Using the existing merge_sdai functionality
+        if not bot.remove_collateral('currency', merge_amount):
             print("⚠️ Failed to merge sDAI tokens. Continuing to final evaluation.")
         else:
             print(f"✅ Successfully merged {merge_amount} pairs of YES/NO tokens into sDAI")
