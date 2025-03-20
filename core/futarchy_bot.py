@@ -143,14 +143,19 @@ class FutarchyBot(BaseBot):
         
         # Function to floor a number to 6 decimal places
         def floor_to_6(val):
-            # Convert to string with 6 decimal places, then back to float
-            # This effectively truncates (floors) the value to 6 decimal places
-            str_val = str(float(val))
-            if '.' in str_val:
-                integer_part, decimal_part = str_val.split('.')
-                decimal_part = decimal_part[:6]  # Keep only first 6 decimal digits
-                return float(f"{integer_part}.{decimal_part}")
-            return float(val)
+            # Handle scientific notation and regular decimals properly
+            if val == 0:
+                return 0.0
+                
+            # Convert to a decimal with proper precision
+            from decimal import Decimal, ROUND_DOWN
+            d_val = Decimal(str(val))
+            
+            # Round down to 6 decimal places to ensure no rounding up
+            rounded = d_val.quantize(Decimal('0.000001'), rounding=ROUND_DOWN)
+            
+            # Convert back to float for display
+            return float(rounded)
         
         print(f"\n🟢 {TOKEN_CONFIG['currency']['name']} (Currency):")
         print(f"  Wallet: {floor_to_6(balances['currency']['wallet']):.6f}")
