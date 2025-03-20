@@ -493,45 +493,108 @@ def main():
 
 def sell_sdai_yes(bot, amount):
     """
-    Sell sDAI-YES tokens for sDAI using SushiSwap V3.
+    Sell sDAI-YES tokens for sDAI.
     
     Args:
         bot: FutarchyBot instance
         amount: Amount of sDAI-YES to sell
     """
-    print(f"\n🔄 Selling {amount} sDAI-YES for sDAI...")
+    # Function to floor a number to 6 decimal places
+    def floor_to_6(val):
+        # Convert to string with 6 decimal places, then back to float
+        # This effectively truncates (floors) the value to 6 decimal places
+        str_val = str(float(val))
+        if '.' in str_val:
+            integer_part, decimal_part = str_val.split('.')
+            decimal_part = decimal_part[:6]  # Keep only first 6 decimal digits
+            return float(f"{integer_part}.{decimal_part}")
+        return float(val)
     
-    # Convert amount to wei
-    amount_wei = bot.w3.to_wei(amount, 'ether')
+    # Round the input amount to 6 decimal places
+    amount = float(round(float(amount), 6))
+    print(f"\n🔄 Selling {amount:.6f} sDAI-YES for sDAI...")
     
-    # Get token addresses
-    sdai_yes_address = TOKEN_CONFIG["currency"]["yes_address"]
-    sdai_address = TOKEN_CONFIG["currency"]["address"]
-    pool_address = CONTRACT_ADDRESSES["sdaiYesPool"]
+    # Get current balances
+    balances = bot.get_balances()
+    sdai_yes_balance = balances['currency']['yes']
+    sdai_balance = balances['currency']['wallet']
     
-    # Initialize SushiSwap exchange
-    sushiswap = SushiSwapExchange(bot)
+    # Display floor-rounded balances
+    sdai_yes_display = floor_to_6(sdai_yes_balance)
+    sdai_display = floor_to_6(sdai_balance)
     
-    # Get pool info to determine token order
-    pool_info = sushiswap.get_pool_info(pool_address)
-    token0 = pool_info['token0'].lower()
+    print("Balance before swap:")
+    print(f"sDAI-YES: {sdai_yes_display:.6f}")
+    print(f"sDAI: {sdai_display:.6f}")
     
-    # Determine if we're swapping token0 for token1 or vice versa
-    zero_for_one = sdai_yes_address.lower() == token0
+    # Get current pool price
+    pool_address = bot.w3.to_checksum_address(POOL_CONFIG_YES["address"])
+    pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+    pool_contract = bot.w3.eth.contract(address=pool_address, abi=pool_abi)
+    slot0 = pool_contract.functions.slot0().call()
+    current_sqrt_price = slot0[0]
+    print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
+    
+    # For zero_for_one=True (going down in price), use 80% of current price as the limit
+    sqrt_price_limit_x96 = int(current_sqrt_price * 0.8)
+    print(f"Using price limit of 80% of current price: {sqrt_price_limit_x96}")
+    
+    # Check balance (display floor-rounded values, compare exact values)
+    print(f"💰 Current balance: {sdai_yes_display:.6f} tokens")
+    print(f"💰 Required amount: {amount:.6f} tokens")
+    
+    if sdai_yes_balance < amount:
+        print("❌ Insufficient balance")
+        print("❌ Swap failed!")
+        return
     
     # Execute the swap
-    success = sushiswap.swap(
-        pool_address=pool_address,
-        token_in=sdai_yes_address,
-        token_out=sdai_address,
-        amount=amount_wei,
-        zero_for_one=zero_for_one
+    router = PassthroughRouter(
+        bot.w3,
+        os.environ.get("PRIVATE_KEY"),
+        os.environ.get("V3_PASSTHROUGH_ROUTER_ADDRESS")
     )
     
-    if success:
-        print("✅ Swap completed successfully!")
-        # Refresh balances to show the result
-        show_balances(bot)
+    result = router.execute_swap(
+        pool_address=pool_address,
+        token_in=TOKEN_CONFIG["currency"]["yes_address"],
+        token_out=TOKEN_CONFIG["currency"]["address"],
+        amount=amount,
+        zero_for_one=True,
+        sqrt_price_limit_x96=sqrt_price_limit_x96
+    )
+    
+    if result:
+        print("✅ Swap successful!")
+        
+        # Get updated balances
+        updated_balances = bot.get_balances()
+        sdai_yes_change = updated_balances['currency']['yes'] - sdai_yes_balance
+        sdai_change = updated_balances['currency']['wallet'] - sdai_balance
+        
+        print("\nBalance Changes:")
+        print(f"sDAI-YES: {sdai_yes_change:+.6f}")
+        print(f"sDAI: {sdai_change:+.6f}")
+        
+        # Calculate effective price and compare with the event probability
+        if sdai_yes_change != 0:  # Avoid division by zero
+            effective_price = abs(float(sdai_change) / float(sdai_yes_change))
+            effective_percent = effective_price * 100
+            event_probability = bot.get_sdai_yes_probability()
+            event_percent = event_probability * 100
+            
+            print(f"\nEffective price: {effective_price:.6f} sDAI per sDAI-YES ({effective_percent:.2f}%)")
+            print(f"Current pool price ratio: {event_probability:.6f} ({event_percent:.2f}%)")
+            
+            if effective_price > 1.0:
+                print(f"❗ Price exceeds 100%! This means you get MORE sDAI than the sDAI-YES you sell.")
+                print(f"   This indicates a market anomaly, as conditional tokens should not exceed 100%.")
+            
+            price_diff_pct = ((effective_price / event_probability) - 1) * 100
+            print(f"Price difference from pool: {price_diff_pct:.2f}%")
+        
+        # Also show the full balances
+        bot.print_balances(updated_balances)
     else:
         print("❌ Swap failed!")
 
