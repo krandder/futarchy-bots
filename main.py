@@ -239,7 +239,7 @@ def main():
             print(f"\n✅ Successfully bought {wagno_received:.18f} waGNO")
             
             # Step 2: Unwrap waGNO to GNO
-            print(f"\n🔄 Unwrapping {wagno_received:.18f} waGNO to GNO...")
+            print(f"\n🔹 Step 2: Unwrapping {wagno_received:.18f} waGNO to GNO...")
             
             # Get GNO balance before unwrapping
             before_balances = bot.get_balances()
@@ -963,15 +963,20 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
             print(f"✅ Successfully bought {wagno_received:.6f} waGNO")
     
     # Step 2: Unwrap waGNO to GNO using existing command implementation
-    print(f"\n🔹 Step 2: Unwrapping {wagno_received:.6f} waGNO to GNO")
+    print(f"\n🔹 Step 2: Unwrapping waGNO to GNO")
+    
+    # Get the current balance after buying waGNO
+    current_balances = bot.get_balances()
+    total_wagno = float(current_balances['wagno']['wallet'])
+    
+    print(f"📊 Total waGNO available: {total_wagno:.6f}")
     
     # Get GNO balance before unwrapping
-    before_balances = bot.get_balances()
-    gno_before = float(before_balances['company']['wallet'])
+    gno_before = float(current_balances['company']['wallet'])
     
-    # Try to unwrap waGNO to GNO (but ignore errors)
+    # Try to unwrap all available waGNO to GNO
     try:
-        bot.aave_balancer.unwrap_wagno(wagno_received)
+        bot.aave_balancer.unwrap_wagno(total_wagno)
     except Exception as e:
         # Ignore errors, we'll check the balance later
         pass
@@ -988,10 +993,21 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
     print(f"✅ Received {gno_amount:.6f} GNO after unwrapping")
     
     # Step 3: Split GNO into YES/NO tokens using existing command implementation
-    print(f"\n🔹 Step 3: Splitting {gno_amount:.6f} GNO into YES/NO tokens")
+    print(f"\n🔹 Step 3: Splitting GNO into YES/NO tokens")
+    
+    # Get current GNO balance to split
+    current_balances = bot.get_balances()
+    total_gno = float(current_balances['company']['wallet'])
+    
+    print(f"📊 Total GNO available: {total_gno:.6f}")
+    
+    # Get current YES/NO token balances
+    gno_yes_before = float(current_balances['company']['yes'])
+    gno_no_before = float(current_balances['company']['no'])
+    
     try:
-        # Using add_collateral which is the existing implementation for split_gno
-        success = bot.add_collateral('company', gno_amount)
+        # Add collateral (split) all available GNO
+        success = bot.add_collateral('company', total_gno)
         if not success:
             print("❌ Failed to split GNO. Aborting arbitrage.")
             return
@@ -1001,17 +1017,26 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
     
     # Check GNO-YES and GNO-NO balances
     intermediate_balances = bot.get_balances()
-    gno_yes_amount = float(intermediate_balances['company']['yes'])
-    gno_no_amount = float(intermediate_balances['company']['no'])
+    gno_yes_amount = float(intermediate_balances['company']['yes']) - gno_yes_before
+    gno_no_amount = float(intermediate_balances['company']['no']) - gno_no_before
+    
+    # Get total YES/NO token balances for selling
+    total_gno_yes = float(intermediate_balances['company']['yes'])
+    total_gno_no = float(intermediate_balances['company']['no'])
     
     if gno_yes_amount <= 0 or gno_no_amount <= 0:
         print("❌ Failed to receive both GNO-YES and GNO-NO tokens. Aborting arbitrage.")
         return
     
     print(f"✅ Received {gno_yes_amount:.6f} GNO-YES and {gno_no_amount:.6f} GNO-NO tokens")
+    print(f"📊 Total available: {total_gno_yes:.6f} GNO-YES and {total_gno_no:.6f} GNO-NO tokens")
     
     # Step 4: Sell GNO-YES for sDAI-YES using existing swap_gno_yes_to_sdai_yes command
-    print(f"\n🔹 Step 4: Selling {gno_yes_amount:.6f} GNO-YES for sDAI-YES")
+    print(f"\n🔹 Step 4: Selling {total_gno_yes:.6f} GNO-YES for sDAI-YES")
+    
+    # Get current sDAI-YES balance before swap
+    sdai_yes_before = float(intermediate_balances['currency']['yes'])
+    
     try:
         # Create a PassthroughRouter instance directly
         passthrough = PassthroughRouter(
@@ -1022,9 +1047,6 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         
         token_in = TOKEN_CONFIG["company"]["yes_address"]  # GNO YES
         token_out = TOKEN_CONFIG["currency"]["yes_address"]  # sDAI YES
-        
-        # Convert to Wei
-        yes_amount_wei = bot.w3.to_wei(gno_yes_amount, 'ether')
         
         # Get the current pool price directly from the pool
         pool_address = bot.w3.to_checksum_address(POOL_CONFIG_YES["address"])
@@ -1040,7 +1062,7 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
             pool_address=pool_address,
             token_in=token_in,
             token_out=token_out,
-            amount=gno_yes_amount,
+            amount=total_gno_yes,
             zero_for_one=True,
             sqrt_price_limit_x96=sqrt_price_limit_x96
         )
@@ -1051,7 +1073,11 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         print("⚠️ Continuing with arbitrage despite GNO-YES selling error")
     
     # Step 5: Sell GNO-NO for sDAI-NO using existing swap_gno_no command
-    print(f"\n🔹 Step 5: Selling {gno_no_amount:.6f} GNO-NO for sDAI-NO")
+    print(f"\n🔹 Step 5: Selling {total_gno_no:.6f} GNO-NO for sDAI-NO")
+    
+    # Get current sDAI-NO balance before swap
+    sdai_no_before = float(intermediate_balances['currency']['no'])
+    
     try:
         # Add a small delay to avoid nonce too low errors
         time.sleep(2)
@@ -1065,9 +1091,6 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         
         token_in = TOKEN_CONFIG["company"]["no_address"]  # GNO NO
         token_out = TOKEN_CONFIG["currency"]["no_address"]  # sDAI NO
-        
-        # Convert to Wei
-        no_amount_wei = bot.w3.to_wei(gno_no_amount, 'ether')
         
         # Get the current pool price directly from the pool
         pool_address = bot.w3.to_checksum_address(POOL_CONFIG_NO["address"])
@@ -1083,7 +1106,7 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
             pool_address=pool_address,
             token_in=token_in,
             token_out=token_out,
-            amount=gno_no_amount,
+            amount=total_gno_no,
             zero_for_one=False,  # GNO NO -> sDAI NO is swapping token1 for token0
             sqrt_price_limit_x96=sqrt_price_limit_x96
         )
@@ -1093,17 +1116,25 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         print(f"❌ Error selling GNO-NO: {e}")
         print("⚠️ Continuing with arbitrage despite GNO-NO selling error")
     
-    # Check sDAI-YES and sDAI-NO balances for merging
-    intermediate_balances = bot.get_balances()
-    sdai_yes_amount = float(intermediate_balances['currency']['yes'])
-    sdai_no_amount = float(intermediate_balances['currency']['no'])
+    # Step 6: Merge sDAI-YES and sDAI-NO tokens into sDAI
+    # Get latest balances after swaps
+    post_swap_balances = bot.get_balances()
+    sdai_yes_after = float(post_swap_balances['currency']['yes'])
+    sdai_no_after = float(post_swap_balances['currency']['no'])
     
-    # Step 6: Merge sDAI-YES and sDAI-NO into sDAI using existing command implementation
-    # We can only merge the minimum of the two amounts
-    merge_amount = min(sdai_yes_amount, sdai_no_amount)
+    # Calculate how much was received
+    sdai_yes_received = sdai_yes_after - sdai_yes_before
+    sdai_no_received = sdai_no_after - sdai_no_before
+    
+    print(f"\n📊 sDAI-YES received: {sdai_yes_received:.6f}")
+    print(f"📊 sDAI-NO received: {sdai_no_received:.6f}")
+    
+    # Calculate amount to merge (min of YES and NO to form pairs)
+    merge_amount = min(sdai_yes_after, sdai_no_after)
+    
+    print(f"\n🔹 Step 6: Merging {merge_amount:.6f} pairs of sDAI-YES and sDAI-NO tokens into sDAI")
     
     if merge_amount > 0:
-        print(f"\n🔹 Step 6: Merging {merge_amount:.6f} sDAI-YES and sDAI-NO tokens into sDAI")
         try:
             # Using remove_collateral which is the existing implementation for merge_sdai
             success = bot.remove_collateral('currency', merge_amount)
