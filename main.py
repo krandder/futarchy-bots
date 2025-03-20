@@ -12,6 +12,7 @@ import json
 from web3 import Web3
 from dotenv import load_dotenv
 from exchanges.sushiswap import SushiSwapExchange
+from exchanges.passthrough_router import PassthroughRouter
 from config.constants import (
     CONTRACT_ADDRESSES,
     TOKEN_CONFIG,
@@ -21,6 +22,8 @@ from config.constants import (
     DEFAULT_SWAP_CONFIG,
     DEFAULT_PERMIT_CONFIG
 )
+from eth_account import Account
+from eth_account.signers.local import LocalAccount
 
 # Add the current directory to the path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
@@ -83,6 +86,19 @@ def parse_args():
     swap_gno_no_parser = subparsers.add_parser('swap_gno_no', help='Swap GNO NO to sDAI NO')
     swap_gno_no_parser.add_argument('amount', type=float, help='Amount of GNO NO to swap')
     
+    # Add the four new passthrough router swap commands
+    swap_gno_yes_to_sdai_yes_parser = subparsers.add_parser('swap_gno_yes_to_sdai_yes', help='Swap GNO YES to sDAI YES using passthrough router')
+    swap_gno_yes_to_sdai_yes_parser.add_argument('amount', type=float, help='Amount of GNO YES to swap')
+    
+    swap_sdai_yes_to_gno_yes_parser = subparsers.add_parser('swap_sdai_yes_to_gno_yes', help='Swap sDAI YES to GNO YES using passthrough router')
+    swap_sdai_yes_to_gno_yes_parser.add_argument('amount', type=float, help='Amount of sDAI YES to swap')
+    
+    swap_gno_no_to_sdai_no_parser = subparsers.add_parser('swap_gno_no_to_sdai_no', help='Swap GNO NO to sDAI NO using passthrough router')
+    swap_gno_no_to_sdai_no_parser.add_argument('amount', type=float, help='Amount of GNO NO to swap')
+    
+    swap_sdai_no_to_gno_no_parser = subparsers.add_parser('swap_sdai_no_to_gno_no', help='Swap sDAI NO to GNO NO using passthrough router')
+    swap_sdai_no_to_gno_no_parser.add_argument('amount', type=float, help='Amount of sDAI NO to swap')
+    
     # Add merge_sdai command
     merge_sdai_parser = subparsers.add_parser('merge_sdai', help='Merge sDAI-YES and sDAI-NO back into sDAI')
     merge_sdai_parser.add_argument('amount', type=float, help='Amount of sDAI-YES and sDAI-NO to merge')
@@ -94,6 +110,18 @@ def parse_args():
     # Add debug command
     debug_parser = subparsers.add_parser('debug', help='Run in debug mode with additional output')
     
+    # Add test_swaps command
+    test_swaps_parser = subparsers.add_parser('test_swaps', help='Test all swap functions with small amounts')
+    test_swaps_parser.add_argument('--amount', type=float, default=0.001, help='Amount to use for testing (default: 0.001)')
+    
+    # Add try_sdai_no_to_gno_no command
+    try_sdai_no_swap_parser = subparsers.add_parser('try_sdai_no_to_gno_no', help='Try SDAI NO to GNO NO swap with multiple price limits')
+    try_sdai_no_swap_parser.add_argument('amount', type=float, help='Amount of sDAI NO to swap')
+    
+    # Add try_smaller_amounts command
+    try_amounts_parser = subparsers.add_parser('try_smaller_amounts', help='Try SDAI NO to GNO NO swap with progressively smaller amounts')
+    try_amounts_parser.add_argument('--max_amount', type=float, default=0.001, help='Starting amount for the test (default: 0.001)')
+    
     return parser.parse_args()
 
 def main():
@@ -102,6 +130,13 @@ def main():
     
     # Initialize the bot with optional RPC URL
     bot = FutarchyBot(rpc_url=args.rpc, verbose=args.verbose)
+    
+    # Initialize passthrough router for conditional token swaps
+    router = PassthroughRouter(
+        bot.w3,
+        os.environ.get("PRIVATE_KEY"),
+        os.environ.get("V3_PASSTHROUGH_ROUTER_ADDRESS")
+    )
     
     if args.command == 'debug':
         # Debug mode - check pool configuration and balances
@@ -144,7 +179,8 @@ def main():
         bot.print_balances(balances)
         return
     
-    if not args.amount:
+    # Check if command needs an amount and if it's provided
+    if hasattr(args, 'amount') and not args.amount and args.command not in ['test_swaps', 'try_smaller_amounts']:
         print("❌ Amount is required for this command")
         return
     
@@ -247,6 +283,303 @@ def main():
     
     elif args.command == 'sell_sdai_yes':
         sell_sdai_yes(bot, args.amount)
+    
+    elif args.command == 'swap_gno_yes_to_sdai_yes':
+        # In YES pool: GNO is token0, so GNO->SDAI is zero_for_one=true
+        # Get the current pool price directly from the pool
+        pool_address = router.w3.to_checksum_address(POOL_CONFIG_YES["address"])
+        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        slot0 = pool_contract.functions.slot0().call()
+        current_sqrt_price = slot0[0]
+        print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
+        
+        # For zero_for_one=True (going down in price), use 80% of current price as the limit
+        sqrt_price_limit_x96 = int(current_sqrt_price * 0.8)
+        print(f"Using price limit of 80% of current price: {sqrt_price_limit_x96}")
+        
+        result = router.execute_swap(
+            pool_address=pool_address,
+            token_in=TOKEN_CONFIG["company"]["yes_address"],
+            token_out=TOKEN_CONFIG["currency"]["yes_address"],
+            amount=args.amount,
+            zero_for_one=True,
+            sqrt_price_limit_x96=sqrt_price_limit_x96
+        )
+        if not result:
+            print("❌ GNO YES to sDAI YES swap failed")
+            return
+    
+    elif args.command == 'swap_sdai_yes_to_gno_yes':
+        # In YES pool: GNO is token0, so SDAI->GNO is zero_for_one=false
+        # Get the current pool price directly from the pool
+        pool_address = router.w3.to_checksum_address(POOL_CONFIG_YES["address"])
+        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        slot0 = pool_contract.functions.slot0().call()
+        current_sqrt_price = slot0[0]
+        print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
+        
+        # For zero_for_one=False (going up in price), use 120% of current price as the limit
+        sqrt_price_limit_x96 = int(current_sqrt_price * 1.2)
+        print(f"Using price limit of 120% of current price: {sqrt_price_limit_x96}")
+        
+        result = router.execute_swap(
+            pool_address=pool_address,
+            token_in=TOKEN_CONFIG["currency"]["yes_address"],
+            token_out=TOKEN_CONFIG["company"]["yes_address"],
+            amount=args.amount,
+            zero_for_one=False,
+            sqrt_price_limit_x96=sqrt_price_limit_x96
+        )
+        if not result:
+            print("❌ sDAI YES to GNO YES swap failed")
+            return
+    
+    elif args.command == 'swap_gno_no_to_sdai_no':
+        # In NO pool: SDAI is token0, so GNO->SDAI is zero_for_one=false
+        # Get the current pool price directly from the pool
+        pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
+        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        slot0 = pool_contract.functions.slot0().call()
+        current_sqrt_price = slot0[0]
+        print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
+        
+        # For zero_for_one=False (going up in price), use 120% of current price as the limit
+        sqrt_price_limit_x96 = int(current_sqrt_price * 1.2)
+        print(f"Using price limit of 120% of current price: {sqrt_price_limit_x96}")
+        
+        result = router.execute_swap(
+            pool_address=pool_address,
+            token_in=TOKEN_CONFIG["company"]["no_address"],
+            token_out=TOKEN_CONFIG["currency"]["no_address"],
+            amount=args.amount,
+            zero_for_one=False,
+            sqrt_price_limit_x96=sqrt_price_limit_x96
+        )
+        if not result:
+            print("❌ GNO NO to sDAI NO swap failed")
+            return
+    
+    elif args.command == 'swap_sdai_no_to_gno_no':
+        # In NO pool: SDAI is token0, so SDAI->GNO is zero_for_one=true
+        # Get the current pool price directly from the pool
+        pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
+        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        slot0 = pool_contract.functions.slot0().call()
+        current_sqrt_price = slot0[0]
+        print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
+        
+        # For zero_for_one=True (going down in price), use 80% of current price as the limit
+        sqrt_price_limit_x96 = int(current_sqrt_price * 0.8)
+        print(f"Using price limit of 80% of current price: {sqrt_price_limit_x96}")
+        
+        result = router.execute_swap(
+            pool_address=pool_address,
+            token_in=TOKEN_CONFIG["currency"]["no_address"],
+            token_out=TOKEN_CONFIG["company"]["no_address"],
+            amount=args.amount,
+            zero_for_one=True,
+            sqrt_price_limit_x96=sqrt_price_limit_x96
+        )
+        if not result:
+            print("❌ sDAI NO to GNO NO swap failed")
+            return
+    
+    elif args.command == 'test_swaps':
+        print("\n🧪 Testing all swap functions with small amounts...")
+        test_amount = args.amount if hasattr(args, 'amount') else 0.001
+        
+        # Set up pool ABIs for price queries
+        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+        
+        # Get YES pool price
+        yes_pool_address = router.w3.to_checksum_address(POOL_CONFIG_YES["address"])
+        yes_pool_contract = router.w3.eth.contract(address=yes_pool_address, abi=pool_abi)
+        yes_slot0 = yes_pool_contract.functions.slot0().call()
+        yes_sqrt_price = yes_slot0[0]
+        print(f"YES pool current sqrtPriceX96: {yes_sqrt_price}")
+        
+        # Get NO pool price
+        no_pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
+        no_pool_contract = router.w3.eth.contract(address=no_pool_address, abi=pool_abi)
+        no_slot0 = no_pool_contract.functions.slot0().call()
+        no_sqrt_price = no_slot0[0]
+        print(f"NO pool current sqrtPriceX96: {no_sqrt_price}")
+        
+        # 1. Test GNO YES to SDAI YES
+        print("\n\n============================================")
+        print(f"🔄 Testing GNO YES to SDAI YES swap with {test_amount} tokens...")
+        print("============================================")
+        
+        # For GNO to SDAI (zero_for_one=True), use 80% of current price
+        yes_sqrt_price_limit = int(yes_sqrt_price * 0.8)
+        print(f"Using price limit of 80% of current price: {yes_sqrt_price_limit}")
+        
+        gno_yes_to_sdai_result = router.execute_swap(
+            pool_address=yes_pool_address,
+            token_in=TOKEN_CONFIG["company"]["yes_address"],
+            token_out=TOKEN_CONFIG["currency"]["yes_address"],
+            amount=test_amount,
+            zero_for_one=True,
+            sqrt_price_limit_x96=yes_sqrt_price_limit
+        )
+        
+        # 2. Test SDAI YES to GNO YES
+        print("\n\n============================================")
+        print(f"🔄 Testing SDAI YES to GNO YES swap with {test_amount} tokens...")
+        print("============================================")
+        
+        # For SDAI to GNO (zero_for_one=False), use 120% of current price
+        yes_sqrt_price_limit = int(yes_sqrt_price * 1.2)
+        print(f"Using price limit of 120% of current price: {yes_sqrt_price_limit}")
+        
+        sdai_yes_to_gno_result = router.execute_swap(
+            pool_address=yes_pool_address,
+            token_in=TOKEN_CONFIG["currency"]["yes_address"],
+            token_out=TOKEN_CONFIG["company"]["yes_address"],
+            amount=test_amount,
+            zero_for_one=False,
+            sqrt_price_limit_x96=yes_sqrt_price_limit
+        )
+        
+        # 3. Test GNO NO to SDAI NO
+        print("\n\n============================================")
+        print(f"🔄 Testing GNO NO to SDAI NO swap with {test_amount} tokens...")
+        print("============================================")
+        
+        # For GNO to SDAI (zero_for_one=False), use 120% of current price
+        no_sqrt_price_limit = int(no_sqrt_price * 1.2)
+        print(f"Using price limit of 120% of current price: {no_sqrt_price_limit}")
+        
+        gno_no_to_sdai_result = router.execute_swap(
+            pool_address=no_pool_address,
+            token_in=TOKEN_CONFIG["company"]["no_address"],
+            token_out=TOKEN_CONFIG["currency"]["no_address"],
+            amount=test_amount,
+            zero_for_one=False,
+            sqrt_price_limit_x96=no_sqrt_price_limit
+        )
+        
+        # 4. Test SDAI NO to GNO NO
+        print("\n\n============================================")
+        print(f"🔄 Testing SDAI NO to GNO NO swap with {test_amount} tokens...")
+        print("============================================")
+        
+        # For SDAI to GNO (zero_for_one=True), use 80% of current price
+        no_sqrt_price_limit = int(no_sqrt_price * 0.8)
+        print(f"Using price limit of 80% of current price: {no_sqrt_price_limit}")
+        
+        sdai_no_to_gno_result = router.execute_swap(
+            pool_address=no_pool_address,
+            token_in=TOKEN_CONFIG["currency"]["no_address"],
+            token_out=TOKEN_CONFIG["company"]["no_address"],
+            amount=test_amount,
+            zero_for_one=True,
+            sqrt_price_limit_x96=no_sqrt_price_limit
+        )
+        
+        # Print summary
+        print("\n\n============================================")
+        print("🧪 Swap Tests Summary")
+        print("============================================")
+        print(f"GNO YES to SDAI YES: {'✅ Success' if gno_yes_to_sdai_result else '❌ Failed'}")
+        print(f"SDAI YES to GNO YES: {'✅ Success' if sdai_yes_to_gno_result else '❌ Failed'}")
+        print(f"GNO NO to SDAI NO: {'✅ Success' if gno_no_to_sdai_result else '❌ Failed'}")
+        print(f"SDAI NO to GNO NO: {'✅ Success' if sdai_no_to_gno_result else '❌ Failed'}")
+        
+        # Show final balances
+        balances = bot.get_balances()
+        bot.print_balances(balances)
+    
+    elif args.command == 'try_sdai_no_to_gno_no':
+        # Try multiple price limits for SDAI NO to GNO NO swap
+        print("\n🧪 Trying SDAI NO to GNO NO swap with multiple price limits...")
+        
+        # Get the current pool price directly
+        pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
+        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        slot0 = pool_contract.functions.slot0().call()
+        current_sqrt_price = slot0[0]
+        print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
+        
+        # Define a range of price limits to try
+        price_limits = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.01]
+        
+        # Try each price limit
+        for limit_factor in price_limits:
+            print(f"\n\n============================================")
+            print(f"🔄 Trying with price limit factor: {limit_factor} ({limit_factor * 100}% of current price)")
+            print(f"============================================")
+            
+            sqrt_price_limit = int(current_sqrt_price * limit_factor)
+            
+            result = router.execute_swap(
+                pool_address=pool_address,
+                token_in=TOKEN_CONFIG["currency"]["no_address"],
+                token_out=TOKEN_CONFIG["company"]["no_address"],
+                amount=args.amount,
+                zero_for_one=True,
+                sqrt_price_limit_x96=sqrt_price_limit
+            )
+            
+            if result:
+                print(f"✅ Success with price limit factor: {limit_factor}")
+                # Show balances and exit
+                balances = bot.get_balances()
+                bot.print_balances(balances)
+                return
+        
+        print("\n❌ All price limits failed for SDAI NO to GNO NO swap")
+        return
+    
+    elif args.command == 'try_smaller_amounts':
+        # Try progressively smaller amounts for SDAI NO to GNO NO swap
+        print("\n🧪 Trying SDAI NO to GNO NO swap with progressively smaller amounts...")
+        
+        # Get the current pool price directly
+        pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
+        pool_abi = [{"inputs": [], "name": "slot0", "outputs": [{"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"}, {"internalType": "int24", "name": "tick", "type": "int24"}, {"internalType": "uint16", "name": "observationIndex", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"}, {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"}, {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"}, {"internalType": "bool", "name": "unlocked", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+        pool_contract = router.w3.eth.contract(address=pool_address, abi=pool_abi)
+        slot0 = pool_contract.functions.slot0().call()
+        current_sqrt_price = slot0[0]
+        print(f"Current pool sqrtPriceX96: {current_sqrt_price}")
+        
+        # Use 80% of current price as the price limit
+        sqrt_price_limit = int(current_sqrt_price * 0.8)
+        print(f"Using price limit of 80% of current price: {sqrt_price_limit}")
+        
+        # Define a range of amounts to try (from 0.0001 to max_amount)
+        max_amount = args.max_amount if hasattr(args, 'max_amount') else 0.001
+        amounts = [max_amount, max_amount/2, max_amount/5, max_amount/10, max_amount/20, max_amount/50, max_amount/100]
+        
+        # Try each amount
+        for amount in amounts:
+            print(f"\n\n============================================")
+            print(f"🔄 Trying with amount: {amount} tokens")
+            print(f"============================================")
+            
+            result = router.execute_swap(
+                pool_address=pool_address,
+                token_in=TOKEN_CONFIG["currency"]["no_address"],
+                token_out=TOKEN_CONFIG["company"]["no_address"],
+                amount=amount,
+                zero_for_one=True,
+                sqrt_price_limit_x96=sqrt_price_limit
+            )
+            
+            if result:
+                print(f"✅ Success with amount: {amount} tokens")
+                # Show balances and exit
+                balances = bot.get_balances()
+                bot.print_balances(balances)
+                return
+        
+        print("\n❌ All amounts failed for SDAI NO to GNO NO swap")
+        return
     
     else:
         # Default to showing help
