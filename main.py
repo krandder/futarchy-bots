@@ -911,23 +911,26 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
     
     # Step 1: Buy waGNO with sDAI
     print(f"\n🔹 Step 1: Buying waGNO with {sdai_amount} sDAI")
-    if not bot.buy_wagno_with_sdai(sdai_amount):
-        print("❌ Failed to buy waGNO. Aborting arbitrage.")
+    from exchanges.balancer.swap import BalancerSwapHandler
+    
+    try:
+        balancer = BalancerSwapHandler(bot)
+        result = balancer.swap_sdai_to_wagno(sdai_amount)
+        if not result or not result.get('success'):
+            print("❌ Failed to buy waGNO. Aborting arbitrage.")
+            return
+            
+        wagno_received = result['balance_changes']['token_out']
+        print(f"✅ Successfully bought {wagno_received:.6f} waGNO")
+    except Exception as e:
+        print(f"❌ Error during waGNO purchase: {e}")
         return
-    
-    # Check waGNO balance
-    intermediate_balances = bot.get_balances()
-    wagno_amount = float(intermediate_balances['wagno']['wallet'])
-    
-    if wagno_amount <= 0:
-        print("❌ No waGNO received. Aborting arbitrage.")
-        return
-    
-    print(f"✅ Received {wagno_amount} waGNO")
     
     # Step 2: Unwrap waGNO to GNO
-    print(f"\n🔹 Step 2: Unwrapping {wagno_amount} waGNO to GNO")
-    if not bot.unwrap_wagno(wagno_amount):
+    print(f"\n🔹 Step 2: Unwrapping {wagno_received:.6f} waGNO to GNO")
+    success = bot.aave_balancer.unwrap_wagno(wagno_received)
+    
+    if not success:
         print("❌ Failed to unwrap waGNO. Aborting arbitrage.")
         return
     
@@ -939,11 +942,11 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         print("❌ No GNO received after unwrapping. Aborting arbitrage.")
         return
     
-    print(f"✅ Received {gno_amount} GNO after unwrapping")
+    print(f"✅ Received {gno_amount:.6f} GNO after unwrapping")
     
     # Step 3: Split GNO into YES/NO tokens
-    print(f"\n🔹 Step 3: Splitting {gno_amount} GNO into YES/NO tokens")
-    # Using the existing split_gno functionality
+    print(f"\n🔹 Step 3: Splitting {gno_amount:.6f} GNO into YES/NO tokens")
+    # Using the existing split_gno functionality (add_collateral)
     if not bot.add_collateral('company', gno_amount):
         print("❌ Failed to split GNO. Aborting arbitrage.")
         return
@@ -957,13 +960,12 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         print("❌ Failed to receive both GNO-YES and GNO-NO tokens. Aborting arbitrage.")
         return
     
-    print(f"✅ Received {gno_yes_amount} GNO-YES and {gno_no_amount} GNO-NO tokens")
+    print(f"✅ Received {gno_yes_amount:.6f} GNO-YES and {gno_no_amount:.6f} GNO-NO tokens")
     
     # Step 4: Sell GNO-YES for sDAI-YES
-    print(f"\n🔹 Step 4: Selling {gno_yes_amount} GNO-YES for sDAI-YES")
-    # Reuse the existing swap_gno_yes_to_sdai_yes functionality
+    print(f"\n🔹 Step 4: Selling {gno_yes_amount:.6f} GNO-YES for sDAI-YES")
     
-    # Get the router 
+    # Get the router
     router = PassthroughRouter(
         bot.w3,
         os.environ.get("PRIVATE_KEY"),
@@ -995,7 +997,7 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
         print("⚠️ Failed to sell GNO-YES tokens. Continuing with remaining steps.")
     
     # Step 5: Sell GNO-NO for sDAI-NO
-    print(f"\n🔹 Step 5: Selling {gno_no_amount} GNO-NO for sDAI-NO")
+    print(f"\n🔹 Step 5: Selling {gno_no_amount:.6f} GNO-NO for sDAI-NO")
     
     # Get the current pool price directly from the pool
     pool_address = router.w3.to_checksum_address(POOL_CONFIG_NO["address"])
@@ -1030,12 +1032,12 @@ def execute_arbitrage_synthetic_gno(bot, sdai_amount):
     merge_amount = min(sdai_yes_amount, sdai_no_amount)
     
     if merge_amount > 0:
-        print(f"\n🔹 Step 6: Merging {merge_amount} sDAI-YES and sDAI-NO tokens into sDAI")
+        print(f"\n🔹 Step 6: Merging {merge_amount:.6f} sDAI-YES and sDAI-NO tokens into sDAI")
         # Using the existing merge_sdai functionality
         if not bot.remove_collateral('currency', merge_amount):
             print("⚠️ Failed to merge sDAI tokens. Continuing to final evaluation.")
         else:
-            print(f"✅ Successfully merged {merge_amount} pairs of YES/NO tokens into sDAI")
+            print(f"✅ Successfully merged {merge_amount:.6f} pairs of YES/NO tokens into sDAI")
     else:
         print("\n🔹 Step 6: No tokens to merge (requires equal YES and NO amounts)")
     
