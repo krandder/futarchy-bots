@@ -7,10 +7,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from web3 import Web3
 from config.constants import (
-    CONTRACT_ADDRESSES, TOKEN_CONFIG, POOL_CONFIG_YES, POOL_CONFIG_NO,
+    TOKEN_CONFIG, POOL_CONFIG_YES, POOL_CONFIG_NO, CONTRACT_ADDRESSES,
     UNISWAP_V3_POOL_ABI, SUSHISWAP_V3_ROUTER_ABI, FUTARCHY_ROUTER_ABI,
     SDAI_RATE_PROVIDER_ABI, WXDAI_ABI, SDAI_DEPOSIT_ABI, MIN_SQRT_RATIO, MAX_SQRT_RATIO,
-    COWSWAP_API_URL
+    COWSWAP_API_URL, BALANCER_CONFIG, BALANCER_VAULT_ABI, BALANCER_BATCH_ROUTER_ABI
 )
 from utils.web3_utils import get_raw_transaction
 from exchanges.cowswap import CowSwapExchange
@@ -311,6 +311,173 @@ class FutarchyBot(BaseBot):
             print(f"❌ Error calculating sDAI-YES price ratio: {e}")
             return None
     
+    def get_wagno_sdai_price(self):
+        """
+        Get the waGNO/sDAI price from Balancer using a swap query.
+        
+        Returns:
+            float: waGNO price in sDAI, or a default value if estimation fails
+        """
+        try:
+            from config.constants import CONTRACT_ADDRESSES, BALANCER_CONFIG, BALANCER_BATCH_ROUTER_ABI
+            
+            # Get the Balancer batch router contract
+            batch_router_address = self.w3.to_checksum_address(CONTRACT_ADDRESSES["batchRouter"])
+            batch_router = self.w3.eth.contract(
+                address=batch_router_address,
+                abi=BALANCER_BATCH_ROUTER_ABI
+            )
+            
+            # Get token addresses and pool address
+            sdai_address = self.w3.to_checksum_address(TOKEN_CONFIG["currency"]["address"])
+            wagno_address = self.w3.to_checksum_address(TOKEN_CONFIG["wagno"]["address"])
+            pool_address = self.w3.to_checksum_address(BALANCER_CONFIG["pool_address"])
+            
+            # Simulate a small swap of 1 waGNO for sDAI
+            amount_wei = 10**18  # 1 waGNO with 18 decimals
+            
+            # Create swap path for query
+            swap_path = {
+                'tokenIn': wagno_address,
+                'steps': [{
+                    'pool': pool_address,
+                    'tokenOut': sdai_address,
+                    'isBuffer': False
+                }],
+                'exactAmountIn': amount_wei,
+                'minAmountOut': 0  # For query only
+            }
+            
+            # Query expected output
+            paths = [swap_path]
+            try:
+                expected_output = batch_router.functions.querySwapExactIn(
+                    paths,
+                    self.address,
+                    b''
+                ).call()
+                
+                expected_amount = expected_output[0][0]
+                
+                # Calculate price: how much sDAI per 1 waGNO
+                if expected_amount > 0:
+                    # Convert to decimal: how many sDAI per waGNO
+                    wagno_to_sdai_price = self.w3.from_wei(expected_amount, 'ether')
+                    return float(wagno_to_sdai_price)
+            except Exception as e:
+                if self.verbose:
+                    print(f"❌ Error querying swap: {e}")
+                
+                # Try the vault method as a fallback
+                return self._get_wagno_sdai_price_from_vault()
+            
+            # Return a default value if something went wrong
+            return 100.0
+                
+        except Exception as e:
+            if self.verbose:
+                print(f"❌ Error getting waGNO/sDAI price: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Return a default value instead of None to avoid formatting errors
+            return 100.0  # Default fallback value
+    
+    def _get_wagno_sdai_price_from_vault(self):
+        """
+        Fallback method to get waGNO price using pool balances from the Balancer vault.
+        
+        Returns:
+            float: waGNO price in sDAI, or a default value if estimation fails
+        """
+        try:
+            # Get the Balancer vault contract
+            vault_address = self.w3.to_checksum_address(BALANCER_CONFIG["vault_address"])
+            vault = self.w3.eth.contract(
+                address=vault_address,
+                abi=BALANCER_VAULT_ABI
+            )
+            
+            # Get the pool ID
+            pool_id = BALANCER_CONFIG["pool_id"]
+            
+            # Call the getPoolTokens function on the vault
+            tokens_info = vault.functions.getPoolTokens(pool_id).call()
+            
+            # Find the indices of sDAI and waGNO in the pool
+            sdai_address = self.w3.to_checksum_address(TOKEN_CONFIG["currency"]["address"])
+            wagno_address = self.w3.to_checksum_address(TOKEN_CONFIG["wagno"]["address"])
+            
+            sdai_index = None
+            wagno_index = None
+            
+            for i, token in enumerate(tokens_info[0]):
+                if token.lower() == sdai_address.lower():
+                    sdai_index = i
+                elif token.lower() == wagno_address.lower():
+                    wagno_index = i
+            
+            if sdai_index is None or wagno_index is None:
+                if self.verbose:
+                    print("❌ Could not find sDAI or waGNO in the Balancer pool")
+                return 100.0  # Default fallback
+            
+            # Get the token balances
+            sdai_balance = tokens_info[1][sdai_index]
+            wagno_balance = tokens_info[1][wagno_index]
+            
+            # Calculate the spot price (balance ratio)
+            sdai_decimals = 18  # Assuming both tokens have 18 decimals
+            wagno_decimals = 18
+            
+            sdai_balance_normalized = sdai_balance / (10 ** sdai_decimals)
+            wagno_balance_normalized = wagno_balance / (10 ** wagno_decimals)
+            
+            # The spot price is the ratio of token balances in a Balancer pool
+            wagno_to_sdai_price = sdai_balance_normalized / wagno_balance_normalized
+            
+            return wagno_to_sdai_price
+                
+        except Exception as e:
+            if self.verbose:
+                print(f"❌ Error getting waGNO/sDAI price from vault: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Return a default value instead of None to avoid formatting errors
+            return 100.0  # Default fallback value
+    
+    def get_wagno_gno_ratio(self):
+        """
+        Get the waGNO to GNO conversion ratio.
+        
+        Returns:
+            float: The conversion ratio (1 GNO = X waGNO), defaults to 1.0 if estimation fails
+        """
+        try:
+            # Import the GNO converter
+            from price_impact.gno_converter import GnoConverter
+            from config.constants import TOKEN_CONFIG
+            
+            # Initialize the converter
+            converter = GnoConverter(
+                self.w3, 
+                TOKEN_CONFIG["company"]["address"], 
+                TOKEN_CONFIG["wagno"]["address"],
+                verbose=self.verbose
+            )
+            
+            # Calculate the conversion rate
+            return converter.calculate_conversion_rate()
+        except Exception as e:
+            if self.verbose:
+                print(f"❌ Error getting waGNO/GNO conversion ratio: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Default to 1:1 if there's an error
+            return 1.0
+
     def get_market_prices(self):
         """
         Get market prices and probabilities.
@@ -334,9 +501,13 @@ class FutarchyBot(BaseBot):
         # Get NO GNO price
         no_price = self.get_token_price(TOKEN_CONFIG["company"]["no_address"], 
                                          TOKEN_CONFIG["currency"]["no_address"])
+        
+        # Get waGNO spot price and GNO/waGNO ratio
+        wagno_price = self.get_wagno_sdai_price()
+        wagno_gno_ratio = self.get_wagno_gno_ratio()
                 
-        # Get spot GNO price from CoW Swap
-        gno_price = self.get_gno_sdai_price()
+        # Get spot GNO price, calculated as waGNO price / waGNO to GNO ratio
+        gno_price = wagno_price / wagno_gno_ratio if wagno_gno_ratio != 0 else 0
         
         # Calculate synthetic price using capped probability for calculations
         synthetic_price = (yes_price * probability) + (no_price * (1 - probability))
@@ -345,6 +516,8 @@ class FutarchyBot(BaseBot):
             "yes_price": yes_price,
             "no_price": no_price,
             "gno_price": gno_price,
+            "wagno_price": wagno_price,
+            "wagno_gno_ratio": wagno_gno_ratio,
             "probability": probability,
             "raw_probability": raw_probability,  # Include the raw ratio
             "synthetic_price": synthetic_price
@@ -436,7 +609,9 @@ class FutarchyBot(BaseBot):
         print("\n=== Market Prices & Probability ===")
         print(f"YES GNO Price: {prices['yes_price']:.6f} sDAI")
         print(f"NO GNO Price: {prices['no_price']:.6f} sDAI")
-        print(f"GNO Spot Price (sDAI): {prices['gno_price']:.6f}")
+        print(f"waGNO Spot Price: {prices['wagno_price']:.6f} sDAI")
+        print(f"waGNO/GNO Ratio: {prices['wagno_gno_ratio']:.6f} (1 GNO = {prices['wagno_gno_ratio']:.6f} waGNO)")
+        print(f"GNO Spot Price (sDAI): {prices['gno_price']:.6f} (calculated as waGNO price / waGNO-GNO ratio)")
         
         # Show the raw and capped price ratios
         raw_ratio = prices.get('raw_probability', prices['probability'])
