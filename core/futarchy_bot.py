@@ -254,57 +254,55 @@ class FutarchyBot(BaseBot):
         Get market prices and probabilities.
         
         Returns:
-            dict: Market price information including:
-                - yes_company_price: Price of GNO YES tokens in terms of sDAI YES
-                - no_company_price: Price of GNO NO tokens in terms of sDAI NO
-                - gno_spot_price: Current market price of GNO in sDAI
-                - event_probability: Raw probability value from sDAI-YES/sDAI price (can exceed 1.0)
-                - synthetic_spot_price: Synthetic GNO price calculated from YES/NO prices and probability
+            dict: Market prices and probabilities
         """
-        try:
-            # Get slot0 data from pools
-            yes_slot0 = self.yes_pool.functions.slot0().call()
-            no_slot0 = self.no_pool.functions.slot0().call()
-            
-            # Calculate prices from sqrtPriceX96
-            yes_sqrt_price = int(yes_slot0[0])
-            no_sqrt_price = int(no_slot0[0])
-            
-            yes_raw_price = (yes_sqrt_price ** 2) / (2 ** 192)
-            no_raw_price = (no_sqrt_price ** 2) / (2 ** 192)
-            
-            # Adjust based on token slot
-            yes_company_price = 1 / yes_raw_price if POOL_CONFIG_YES["tokenCompanySlot"] == 1 else yes_raw_price
-            no_company_price = 1 / no_raw_price if POOL_CONFIG_NO["tokenCompanySlot"] == 1 else no_raw_price
-            
-            # Try to get GNO/SDAI price from CowSwap
-            gno_spot_price = self.get_gno_sdai_price()
-            
-            # Get probability from sDAI-YES/sDAI pool without capping at 1.0
-            try:
-                event_probability = self.get_sdai_yes_probability()
-                if event_probability is None:
-                    # Fallback to old method if new method fails
-                    event_probability = self.get_yes_token_price_ratio()
-            except Exception as prob_err:
-                print(f"❌ Error calculating event probability: {prob_err}")
-                event_probability = 0.5  # Default to 50% as fallback
-            
-            # Calculate synthetic spot price, capping probability at 1.0 for calculation
-            # This ensures the synthetic price makes mathematical sense even with abnormal probabilities
-            calc_probability = min(1.0, event_probability) if event_probability is not None else 0.5
-            synthetic_spot_price = (yes_company_price * calc_probability) + (no_company_price * (1 - calc_probability))
-            
-            return {
-                "yes_company_price": yes_company_price,
-                "no_company_price": no_company_price,
-                "gno_spot_price": gno_spot_price,  # GNO price in sDAI
-                "event_probability": event_probability,
-                "synthetic_spot_price": synthetic_spot_price
-            }
-        except Exception as e:
-            print(f"❌ Error getting market prices: {e}")
-            return None
+        # Get probability from the YES token price ratio
+        probability = self.get_yes_token_price_ratio()
+        
+        # Get YES GNO price
+        yes_price = self.get_token_price(TOKEN_CONFIG["company"]["yes_address"], 
+                                          TOKEN_CONFIG["currency"]["yes_address"])
+        
+        # Get NO GNO price
+        no_price = self.get_token_price(TOKEN_CONFIG["company"]["no_address"], 
+                                         TOKEN_CONFIG["currency"]["no_address"])
+                
+        # Get spot GNO price from CoW Swap
+        gno_price = self.get_gno_sdai_price()
+        
+        # Calculate synthetic price
+        synthetic_price = (yes_price * probability) + (no_price * (1 - probability))
+        
+        return {
+            "yes_price": yes_price,
+            "no_price": no_price,
+            "gno_price": gno_price,
+            "probability": probability,
+            "synthetic_price": synthetic_price
+        }
+    
+    def calculate_synthetic_price(self):
+        """
+        Calculate the synthetic price of GNO based on YES/NO token prices and probability.
+        
+        Synthetic price = (YES_price * probability) + (NO_price * (1 - probability))
+        
+        Returns:
+            tuple: (synthetic_price, spot_price)
+        """
+        # Get market prices
+        prices = self.get_market_prices()
+        
+        # Extract values
+        yes_price = prices.get('yes_price', 0)
+        no_price = prices.get('no_price', 0)
+        spot_price = prices.get('gno_price', 0)
+        probability = prices.get('probability', 0.5)
+        
+        # Calculate synthetic price
+        synthetic_price = (yes_price * probability) + (no_price * (1 - probability))
+        
+        return synthetic_price, spot_price
     
     def get_gno_sdai_price(self):
         """
@@ -376,41 +374,41 @@ class FutarchyBot(BaseBot):
                 return
         
         print("\n=== Market Prices & Probability ===")
-        print(f"YES GNO Price: {prices['yes_company_price']:.6f} sDAI")
-        print(f"NO GNO Price: {prices['no_company_price']:.6f} sDAI")
-        print(f"GNO Spot Price (sDAI): {prices['gno_spot_price']:.6f}")
+        print(f"YES GNO Price: {prices['yes_price']:.6f} sDAI")
+        print(f"NO GNO Price: {prices['no_price']:.6f} sDAI")
+        print(f"GNO Spot Price (sDAI): {prices['gno_price']:.6f}")
         
         # Show the raw price ratio as a percentage (can exceed 100%)
-        ratio_percent = prices['event_probability'] * 100
-        print(f"Event Probability: {prices['event_probability']:.6f} ({ratio_percent:.2f}%)")
+        ratio_percent = prices['probability'] * 100
+        print(f"Event Probability: {prices['probability']:.6f} ({ratio_percent:.2f}%)")
         
         if ratio_percent > 100:
             print(f"⚠️ NOTE: Ratio exceeds 100%, which means sDAI-YES is trading above the price of sDAI!")
-            print(f"This is a market anomaly - you can sell 1 sDAI-YES for {prices['event_probability']:.6f} sDAI.")
+            print(f"This is a market anomaly - you can sell 1 sDAI-YES for {prices['probability']:.6f} sDAI.")
         
         # For synthetic price calculation, we need to cap the probability at 1.0
-        calc_probability = min(1.0, prices['event_probability'])
+        calc_probability = min(1.0, prices['probability'])
         
         # Print synthetic price with calculation explanation
         print("\n=== Synthetic Price Calculation ===")
-        print(f"Synthetic GNO Price: {prices['synthetic_spot_price']:.6f} sDAI")
+        print(f"Synthetic GNO Price: {prices['synthetic_price']:.6f} sDAI")
         
-        if prices['event_probability'] > 1.0:
+        if prices['probability'] > 1.0:
             print("⚠️ For calculation purposes, probability was capped at 100% in the formula below:")
             print(f"Formula: (YES_price * probability) + (NO_price * (1 - probability))")
-            print(f"       = ({prices['yes_company_price']:.6f} * {calc_probability:.4f}) + ({prices['no_company_price']:.6f} * {1 - calc_probability:.4f})")
-            print(f"       = {prices['yes_company_price'] * calc_probability:.6f} + {prices['no_company_price'] * (1 - calc_probability):.6f}")
-            print(f"       = {prices['synthetic_spot_price']:.6f} sDAI")
-            print(f"NOTE: Actual raw ratio from pool is {prices['event_probability']:.6f} ({ratio_percent:.2f}%), which is > 100%")
+            print(f"       = ({prices['yes_price']:.6f} * {calc_probability:.4f}) + ({prices['no_price']:.6f} * {1 - calc_probability:.4f})")
+            print(f"       = {prices['yes_price'] * calc_probability:.6f} + {prices['no_price'] * (1 - calc_probability):.6f}")
+            print(f"       = {prices['synthetic_price']:.6f} sDAI")
+            print(f"NOTE: Actual raw ratio from pool is {prices['probability']:.6f} ({ratio_percent:.2f}%), which is > 100%")
         else:
             print(f"Formula: (YES_price * probability) + (NO_price * (1 - probability))")
-            print(f"       = ({prices['yes_company_price']:.6f} * {prices['event_probability']:.4f}) + ({prices['no_company_price']:.6f} * {1 - prices['event_probability']:.4f})")
-            print(f"       = {prices['yes_company_price'] * prices['event_probability']:.6f} + {prices['no_company_price'] * (1 - prices['event_probability']):.6f}")
-            print(f"       = {prices['synthetic_spot_price']:.6f} sDAI")
+            print(f"       = ({prices['yes_price']:.6f} * {prices['probability']:.4f}) + ({prices['no_price']:.6f} * {1 - prices['probability']:.4f})")
+            print(f"       = {prices['yes_price'] * prices['probability']:.6f} + {prices['no_price'] * (1 - prices['probability']):.6f}")
+            print(f"       = {prices['synthetic_price']:.6f} sDAI")
         
         # Calculate and show potential arbitrage
-        if prices['gno_spot_price'] > 0:  # Avoid division by zero
-            price_difference = ((prices['synthetic_spot_price'] / prices['gno_spot_price']) - 1) * 100
+        if prices['gno_price'] > 0:  # Avoid division by zero
+            price_difference = ((prices['synthetic_price'] / prices['gno_price']) - 1) * 100
             print(f"\nArbitrage Opportunity:")
             print(f"Price Difference: {price_difference:+.2f}% (synthetic vs spot)")
             if abs(price_difference) > 2:  # Only show suggestion if difference is significant
@@ -849,9 +847,9 @@ class FutarchyBot(BaseBot):
             # Fetch current price and apply 2% slippage
             try:
                 prices = self.get_market_prices()
-                if prices and prices.get("gno_spot_price"):
+                if prices and prices.get("gno_price"):
                     # Expected GNO amount = sDAI amount / GNO price
-                    expected_gno = float(amount) / prices["gno_spot_price"]
+                    expected_gno = float(amount) / prices["gno_price"]
                     # Apply 2% slippage
                     min_buy_amount = expected_gno * 0.98
                     print(f"Calculated min buy amount: {min_buy_amount} GNO (with 2% slippage)")
@@ -963,9 +961,9 @@ class FutarchyBot(BaseBot):
             # Fetch current price and apply 2% slippage
             try:
                 prices = self.get_market_prices()
-                if prices and prices.get("gno_spot_price"):
+                if prices and prices.get("gno_price"):
                     # Expected sDAI amount = GNO amount * GNO price
-                    expected_sdai = float(amount) * prices["gno_spot_price"]
+                    expected_sdai = float(amount) * prices["gno_price"]
                     # Apply 2% slippage
                     min_buy_amount = expected_sdai * 0.98
                     print(f"Calculated min buy amount: {min_buy_amount} sDAI (with 2% slippage)")

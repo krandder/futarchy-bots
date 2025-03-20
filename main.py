@@ -90,6 +90,11 @@ def parse_args():
     swap_gno_no_parser = subparsers.add_parser('swap_gno_no', help='Swap GNO NO to sDAI NO')
     swap_gno_no_parser.add_argument('amount', type=float, help='Amount of GNO NO to swap')
     
+    # Add the arbitrage synthetic GNO command
+    arbitrage_synthetic_gno_parser = subparsers.add_parser('arbitrage_synthetic_gno', 
+                                help='Execute full arbitrage: buy GNO spot → split → sell YES/NO → merge')
+    arbitrage_synthetic_gno_parser.add_argument('amount', type=float, help='Amount of sDAI to use for arbitrage')
+    
     # Add the four new passthrough router swap commands
     swap_gno_yes_to_sdai_yes_parser = subparsers.add_parser('swap_gno_yes_to_sdai_yes', help='Swap GNO YES to sDAI YES using passthrough router')
     swap_gno_yes_to_sdai_yes_parser.add_argument('amount', type=float, help='Amount of GNO YES to swap')
@@ -496,6 +501,10 @@ def main():
         balances = bot.get_balances()
         bot.print_balances(balances)
     
+    elif args.command == 'arbitrage_synthetic_gno':
+        # This function executes a full arbitrage operation
+        execute_arbitrage_synthetic_gno(bot, args.amount)
+    
     else:
         # Default to showing help
         print("Please specify a command. Use --help for available commands.")
@@ -865,6 +874,190 @@ def buy_sdai_yes(bot, amount_in_sdai):
         print(f"❌ Test swap failed. The pool may have low liquidity or the parameters are incorrect.")
         print(f"Consider using the split_sdai command to split sDAI into YES/NO tokens at 1:1 ratio.")
         return False
+
+def execute_arbitrage_synthetic_gno(bot, sdai_amount):
+    """
+    Execute a full arbitrage operation:
+    1. Buy waGNO with sDAI
+    2. Unwrap waGNO to GNO
+    3. Split GNO into YES/NO tokens
+    4. Sell GNO-YES for sDAI-YES
+    5. Sell GNO-NO for sDAI-NO
+    6. Merge sDAI-YES and sDAI-NO back into sDAI
+    7. Compare final sDAI amount with initial amount
+    
+    Args:
+        bot: The FutarchyBot instance
+        sdai_amount: Amount of sDAI to use for arbitrage
+    """
+    print(f"\n🔄 Starting synthetic GNO arbitrage with {sdai_amount} sDAI")
+    
+    # Get initial balances and prices
+    initial_balances = bot.get_balances()
+    initial_sdai = float(initial_balances['currency']['wallet'])
+    
+    if initial_sdai < sdai_amount:
+        print(f"❌ Insufficient sDAI balance. Required: {sdai_amount}, Available: {initial_sdai}")
+        return
+    
+    # Get initial market prices for reporting only
+    print("\n📊 Initial market prices:")
+    market_prices = bot.get_market_prices()
+    synthetic_price, spot_price = bot.calculate_synthetic_price()
+    
+    print(f"GNO Spot Price: {spot_price:.6f} sDAI")
+    print(f"GNO Synthetic Price: {synthetic_price:.6f} sDAI")
+    print(f"Price Difference: {((synthetic_price / spot_price) - 1) * 100:.2f}%")
+    
+    # Step 1: Buy waGNO with sDAI
+    print(f"\n🔹 Step 1: Buying waGNO with {sdai_amount} sDAI")
+    if not bot.buy_wagno_with_sdai(sdai_amount):
+        print("❌ Failed to buy waGNO. Aborting arbitrage.")
+        return
+    
+    # Check waGNO balance
+    intermediate_balances = bot.get_balances()
+    wagno_amount = float(intermediate_balances['wagno']['wallet'])
+    
+    if wagno_amount <= 0:
+        print("❌ No waGNO received. Aborting arbitrage.")
+        return
+    
+    print(f"✅ Received {wagno_amount} waGNO")
+    
+    # Step 2: Unwrap waGNO to GNO
+    print(f"\n🔹 Step 2: Unwrapping {wagno_amount} waGNO to GNO")
+    if not bot.unwrap_wagno(wagno_amount):
+        print("❌ Failed to unwrap waGNO. Aborting arbitrage.")
+        return
+    
+    # Check GNO balance
+    intermediate_balances = bot.get_balances()
+    gno_amount = float(intermediate_balances['company']['wallet'])
+    
+    if gno_amount <= 0:
+        print("❌ No GNO received after unwrapping. Aborting arbitrage.")
+        return
+    
+    print(f"✅ Received {gno_amount} GNO after unwrapping")
+    
+    # Step 3: Split GNO into YES/NO tokens
+    print(f"\n🔹 Step 3: Splitting {gno_amount} GNO into YES/NO tokens")
+    if not bot.split_gno(gno_amount):
+        print("❌ Failed to split GNO. Aborting arbitrage.")
+        return
+    
+    # Check GNO-YES and GNO-NO balances
+    intermediate_balances = bot.get_balances()
+    gno_yes_amount = float(intermediate_balances['company']['yes'])
+    gno_no_amount = float(intermediate_balances['company']['no'])
+    
+    if gno_yes_amount <= 0 or gno_no_amount <= 0:
+        print("❌ Failed to receive both GNO-YES and GNO-NO tokens. Aborting arbitrage.")
+        return
+    
+    print(f"✅ Received {gno_yes_amount} GNO-YES and {gno_no_amount} GNO-NO tokens")
+    
+    # Step 4: Sell GNO-YES for sDAI-YES
+    print(f"\n🔹 Step 4: Selling {gno_yes_amount} GNO-YES for sDAI-YES")
+    # Use existing swap_gno_yes_to_sdai_yes command
+    token_in = TOKEN_CONFIG["company"]["yes_address"]  # GNO YES
+    token_out = TOKEN_CONFIG["currency"]["yes_address"]  # sDAI YES
+    
+    # Convert to Wei
+    yes_amount_wei = bot.w3.to_wei(gno_yes_amount, 'ether')
+    
+    # Use the passthrough router for YES tokens
+    try:
+        passthrough = bot.setup_passthrough_router()
+        bot.router_swap_exact_input(
+            passthrough,
+            token_in,
+            token_out,
+            yes_amount_wei,
+            POOL_CONFIG_YES["address"],
+            bot.address,
+            is_zero_for_one=True  # GNO YES -> sDAI YES is swapping token0 for token1
+        )
+        print("✅ Successfully sold GNO-YES tokens for sDAI-YES")
+    except Exception as e:
+        print(f"❌ Error selling GNO-YES: {e}")
+        print("⚠️ Continuing with arbitrage despite GNO-YES selling error")
+    
+    # Step 5: Sell GNO-NO for sDAI-NO
+    print(f"\n🔹 Step 5: Selling {gno_no_amount} GNO-NO for sDAI-NO")
+    if not bot.swap_token(token_type='company', is_buy=False, amount=gno_no_amount, is_yes_token=False):
+        print("⚠️ Failed to sell GNO-NO tokens. Continuing with remaining steps.")
+    else:
+        print("✅ Successfully sold GNO-NO tokens for sDAI-NO")
+    
+    # Check sDAI-YES and sDAI-NO balances for merging
+    intermediate_balances = bot.get_balances()
+    sdai_yes_amount = float(intermediate_balances['currency']['yes'])
+    sdai_no_amount = float(intermediate_balances['currency']['no'])
+    
+    # Step 6: Merge sDAI-YES and sDAI-NO into sDAI
+    # We can only merge the minimum of the two amounts
+    merge_amount = min(sdai_yes_amount, sdai_no_amount)
+    
+    if merge_amount > 0:
+        print(f"\n🔹 Step 6: Merging {merge_amount} sDAI-YES and sDAI-NO tokens into sDAI")
+        if not bot.merge_sdai_collateral(merge_amount):
+            print("⚠️ Failed to merge sDAI tokens. Continuing to final evaluation.")
+        else:
+            print(f"✅ Successfully merged {merge_amount} pairs of YES/NO tokens into sDAI")
+    else:
+        print("\n🔹 Step 6: No tokens to merge (requires equal YES and NO amounts)")
+    
+    # Get final balances and calculate profit/loss
+    final_balances = bot.get_balances()
+    final_sdai = float(final_balances['currency']['wallet'])
+    sdai_yes_final = float(final_balances['currency']['yes'])
+    sdai_no_final = float(final_balances['currency']['no'])
+    
+    # Calculate remaining value locked in YES/NO tokens
+    # This is a rough estimate using the current market probability
+    market_prices_final = bot.get_market_prices()
+    probability = market_prices_final.get('probability', 0.5)
+    
+    estimated_value_of_yes = sdai_yes_final * probability
+    estimated_value_of_no = sdai_no_final * (1 - probability)
+    
+    # Total value = direct sDAI + estimated value of YES/NO tokens
+    total_estimated_value = final_sdai + estimated_value_of_yes + estimated_value_of_no
+    
+    # Calculate profit/loss
+    profit_loss = final_sdai - initial_sdai
+    profit_loss_percent = (profit_loss / initial_sdai) * 100 if initial_sdai > 0 else 0
+    
+    total_profit_loss = total_estimated_value - initial_sdai
+    total_profit_loss_percent = (total_profit_loss / initial_sdai) * 100 if initial_sdai > 0 else 0
+    
+    # Get updated market prices for reporting only
+    synthetic_price_final, spot_price_final = bot.calculate_synthetic_price()
+    
+    # Print summary
+    print("\n📈 Arbitrage Operation Summary")
+    print("=" * 40)
+    print(f"Initial sDAI: {initial_sdai:.6f}")
+    print(f"Final sDAI: {final_sdai:.6f}")
+    print(f"Direct Profit/Loss: {profit_loss:.6f} sDAI ({profit_loss_percent:.2f}%)")
+    
+    print(f"\nRemaining sDAI-YES: {sdai_yes_final:.6f}")
+    print(f"Remaining sDAI-NO: {sdai_no_final:.6f}")
+    print(f"Estimated value of remaining tokens: {(estimated_value_of_yes + estimated_value_of_no):.6f} sDAI")
+    print(f"Total estimated value: {total_estimated_value:.6f} sDAI")
+    print(f"Total estimated profit/loss: {total_profit_loss:.6f} sDAI ({total_profit_loss_percent:.2f}%)")
+    
+    print("\nMarket Prices:")
+    print(f"Initial GNO Spot: {spot_price:.6f} → Final: {spot_price_final:.6f}")
+    print(f"Initial GNO Synthetic: {synthetic_price:.6f} → Final: {synthetic_price_final:.6f}")
+    print(f"Initial Price Gap: {((synthetic_price / spot_price) - 1) * 100:.2f}% → Final: {((synthetic_price_final / spot_price_final) - 1) * 100:.2f}%")
+    
+    if profit_loss > 0:
+        print("\n✅ Arbitrage was profitable!")
+    else:
+        print("\n⚠️ Arbitrage was not profitable. Consider market conditions and gas costs.")
 
 if __name__ == "__main__":
     main()
