@@ -46,6 +46,122 @@ def print_balances(web3, address, token_configs):
             print(f"  YES Token: {format_token_amount(yes_balance, config['yes_address'])}")
             print(f"  NO Token: {format_token_amount(no_balance, config['no_address'])}")
 
+def handle_approval_tx(web3, tx, private_key, token_type="token"):
+    """Handle approval transaction signing and confirmation."""
+    try:
+        # Sign and send approval transaction
+        signed_tx = web3.eth.account.sign_transaction(tx, private_key)
+        tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        print(f"Approval transaction sent for {token_type}: {tx_hash.hex()}")
+        
+        # Wait for transaction confirmation
+        receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
+        if receipt["status"] == 1:
+            print(f"✅ {token_type.capitalize()} approval confirmed")
+            return True
+        else:
+            print(f"❌ {token_type.capitalize()} approval failed")
+            return False
+    except Exception as e:
+        print(f"❌ Error during {token_type} approval: {str(e)}")
+        return False
+
+def execute_operation_with_approvals(web3, handler, action, token_symbol, amount, address, private_key):
+    """Execute token operation with automatic approval handling."""
+    # First attempt
+    if action == 'split':
+        success, msg, tx = handler.split_tokens(
+            token_symbol=token_symbol,
+            amount=amount,
+            condition_id="",  # Not used with router
+            partition=[],     # Not used with router
+            from_address=address
+        )
+    else:  # merge
+        success, msg, tx = handler.merge_tokens(
+            token_symbol=token_symbol,
+            amount=amount,
+            condition_id="",  # Not used with router
+            partition=[],     # Not used with router
+            from_address=address
+        )
+    
+    # Handle approvals if needed
+    if not success:
+        print(f"Info: {msg}")
+        if not tx:
+            print(f"❌ Error: No transaction data available for {msg}")
+            return False
+        
+        # Handle the approval
+        token_type = "token"
+        if "YES token" in msg:
+            token_type = "YES token"
+        elif "NO token" in msg:
+            token_type = "NO token"
+        
+        if not handle_approval_tx(web3, tx, private_key, token_type):
+            return False
+        
+        # Try again after approval
+        if action == 'split':
+            success, msg, tx = handler.split_tokens(
+                token_symbol=token_symbol,
+                amount=amount,
+                condition_id="",
+                partition=[],
+                from_address=address
+            )
+        else:  # merge
+            success, msg, tx = handler.merge_tokens(
+                token_symbol=token_symbol,
+                amount=amount,
+                condition_id="",
+                partition=[],
+                from_address=address
+            )
+        
+        # If we still need another approval (for merge we need both YES and NO)
+        if not success and "NO token" in msg and tx:
+            if not handle_approval_tx(web3, tx, private_key, "NO token"):
+                return False
+            
+            # Try one more time after NO token approval
+            if action == 'merge':
+                success, msg, tx = handler.merge_tokens(
+                    token_symbol=token_symbol,
+                    amount=amount,
+                    condition_id="",
+                    partition=[],
+                    from_address=address
+                )
+    
+    # If we have a valid transaction now, execute it
+    if success:
+        try:
+            # Sign and send the main transaction
+            signed_tx = web3.eth.account.sign_transaction(tx, private_key)
+            tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            print(f"Transaction sent: {tx_hash.hex()}")
+            
+            # Wait for transaction and print final balances
+            receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
+            status = "Success" if receipt["status"] == 1 else "Failed"
+            print(f"\nTransaction confirmed. Status: {status}")
+            
+            if receipt["status"] == 1:
+                return True
+            else:
+                print(f"❌ Transaction failed. Please check the transaction details.")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error executing {action} operation: {str(e)}")
+            return False
+    else:
+        print(f"❌ Could not prepare {action} transaction: {msg}")
+        return False
+
 def main():
     parser = argparse.ArgumentParser(description='Split or merge conditional tokens.')
     parser.add_argument('action', choices=['split', 'merge'], help='Action to perform')
@@ -80,43 +196,23 @@ def main():
     token_map = {'sdai': 'currency', 'gno': 'company'}
     token_symbol = token_map[args.token]
     
-    # Execute split/merge
-    if args.action == 'split':
-        success, msg, tx = handler.split_tokens(
-            token_symbol=token_symbol,
-            amount=amount,
-            condition_id="",  # Not used with router
-            partition=[],     # Not used with router
-            from_address=address
-        )
-    else:  # merge
-        success, msg, tx = handler.merge_tokens(
-            token_symbol=token_symbol,
-            amount=amount,
-            condition_id="",  # Not used with router
-            partition=[],     # Not used with router
-            from_address=address
-        )
+    # Execute operation with automatic approval handling
+    success = execute_operation_with_approvals(
+        web3=web3,
+        handler=handler,
+        action=args.action,
+        token_symbol=token_symbol,
+        amount=amount,
+        address=address,
+        private_key=private_key
+    )
     
-    if not success:
-        print(f"Error: {msg}")
-        if tx:  # If we have an approval transaction
-            # Sign and send approval transaction
-            signed_tx = web3.eth.account.sign_transaction(tx, private_key)
-            tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
-            print(f"Approval transaction sent: {tx_hash.hex()}")
-            web3.eth.wait_for_transaction_receipt(tx_hash)
-            print("Approval confirmed. Please run the command again to execute the split/merge.")
-        sys.exit(1)
+    # Print final result and balances
+    if success:
+        print(f"\n✅ {args.action.capitalize()} operation for {args.token.upper()} completed successfully!")
+    else:
+        print(f"\n❌ {args.action.capitalize()} operation for {args.token.upper()} failed.")
     
-    # Sign and send the transaction
-    signed_tx = web3.eth.account.sign_transaction(tx, private_key)
-    tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
-    print(f"Transaction sent: {tx_hash.hex()}")
-    
-    # Wait for transaction and print final balances
-    receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
-    print("\nTransaction confirmed. Status:", "Success" if receipt["status"] == 1 else "Failed")
     print("\nFinal balances:")
     print_balances(web3, address, TOKEN_CONFIG)
 
