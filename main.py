@@ -36,7 +36,6 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from core.futarchy_bot import FutarchyBot
 from strategies.monitoring import simple_monitoring_strategy
 from strategies.probability import probability_threshold_strategy
-from strategies.arbitrage import arbitrage_strategy
 
 def parse_args():
     """Parse command line arguments"""
@@ -62,11 +61,6 @@ def parse_args():
     prob_parser.add_argument('--buy', type=float, default=0.7, help='Buy threshold')
     prob_parser.add_argument('--sell', type=float, default=0.3, help='Sell threshold')
     prob_parser.add_argument('--amount', type=float, default=0.1, help='Trade amount')
-    
-    # Arbitrage strategy mode
-    arb_parser = subparsers.add_parser('arbitrage', help='Run arbitrage strategy')
-    arb_parser.add_argument('--diff', type=float, default=0.02, help='Minimum price difference')
-    arb_parser.add_argument('--amount', type=float, default=0.1, help='Trade amount')
     
     # Balance commands
     balances_parser = subparsers.add_parser('balances', help='Show token balances')
@@ -126,9 +120,6 @@ def parse_args():
     buy_sdai_yes_parser = subparsers.add_parser('buy_sdai_yes', help='Buy sDAI-YES tokens with sDAI using the dedicated sDAI/sDAI-YES pool')
     buy_sdai_yes_parser.add_argument('amount', type=float, help='Amount of sDAI to spend')
     
-    # Add debug command
-    debug_parser = subparsers.add_parser('debug', help='Run in debug mode with additional output')
-    
     # Add test_swaps command
     test_swaps_parser = subparsers.add_parser('test_swaps', help='Test all swap functions with small amounts')
     test_swaps_parser.add_argument('--amount', type=float, default=0.001, help='Amount to use for testing (default: 0.001)')
@@ -149,43 +140,7 @@ def main():
         os.environ.get("V3_PASSTHROUGH_ROUTER_ADDRESS")
     )
     
-    if args.command == 'debug':
-        # Debug mode - check pool configuration and balances
-        print("\n🔍 Debug Information:")
-        
-        # Get token balances
-        sdai_balance = bot.get_token_balance(TOKEN_CONFIG["currency"]["address"])
-        wagno_balance = bot.get_token_balance(TOKEN_CONFIG["wagno"]["address"])
-        print("\n💰 Token Balances:")
-        print(f"  sDAI: {bot.w3.from_wei(sdai_balance, 'ether')}")
-        print(f"  waGNO: {bot.w3.from_wei(wagno_balance, 'ether')}")
-        
-        # Check pool configuration
-        pool_id = BALANCER_CONFIG["pool_id"]
-        print(f"\n🏊 Pool Configuration:")
-        print(f"  Pool Address: {BALANCER_CONFIG['pool_address']}")
-        print(f"  Pool ID: {pool_id}")
-        
-        # Get pool tokens and balances
-        try:
-            tokens, balances, _ = bot.balancer_handler.balancer_vault.functions.getPoolTokens(pool_id).call()
-            print("\n📊 Pool Tokens:")
-            for i, token in enumerate(tokens):
-                print(f"  {i+1}: {token} - Balance: {bot.w3.from_wei(balances[i], 'ether')}")
-        except Exception as e:
-            print(f"❌ Error getting pool tokens: {e}")
-        
-        # Check token approvals
-        vault_address = BALANCER_CONFIG["vault_address"]
-        sdai_allowance = bot.get_token_allowance(TOKEN_CONFIG["currency"]["address"], vault_address)
-        wagno_allowance = bot.get_token_allowance(TOKEN_CONFIG["wagno"]["address"], vault_address)
-        print("\n✅ Token Approvals for Balancer Vault:")
-        print(f"  sDAI: {bot.w3.from_wei(sdai_allowance, 'ether')}")
-        print(f"  waGNO: {bot.w3.from_wei(wagno_allowance, 'ether')}")
-        
-        return
-    
-    elif args.command in ['balances', 'refresh_balances']:
+    if args.command in ['balances', 'refresh_balances']:
         balances = bot.get_balances()
         bot.print_balances(balances)
         return
@@ -206,10 +161,6 @@ def main():
         if prices:
             bot.print_market_prices(prices)
         return
-    
-    elif args.command == 'arbitrage':
-        print(f"Running arbitrage strategy (min diff: {args.diff}, amount: {args.amount})")
-        bot.run_strategy(lambda b: arbitrage_strategy(b, args.diff, args.amount))
     
     elif args.command == 'buy_wrapped_gno':
         # Buy waGNO with sDAI using Balancer BatchRouter
