@@ -17,7 +17,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "futarchy-bot=futarchy_trading.main:main",
+            "futarchy-bot=main:main",
         ],
     },
     author="Futarchy Bot Team",
