@@ -6,11 +6,11 @@ import os
 # Add the project root to the path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.constants import (
+from futarchy.experimental.config.constants import (
     CONTRACT_ADDRESSES, TOKEN_CONFIG, BALANCER_CONFIG,
     BALANCER_VAULT_ABI, BALANCER_POOL_ABI, WAGNO_ABI
 )
-from utils.web3_utils import get_raw_transaction
+from futarchy.experimental.utils.web3_utils import get_raw_transaction
 
 class AaveBalancerHandler:
     """Handler for Aave and Balancer interactions"""
@@ -85,8 +85,11 @@ class AaveBalancerHandler:
             # Convert amount to wei
             amount_wei = self.w3.to_wei(amount, 'ether')
             
+            # Get GNO token contract
+            gno_token = self.bot.get_token_contract(TOKEN_CONFIG["company"]["address"])
+            
             # Check GNO balance
-            gno_balance = self.sdai_token.functions.balanceOf(self.address).call()
+            gno_balance = gno_token.functions.balanceOf(self.address).call()
             if gno_balance < amount_wei:
                 print(f"❌ Insufficient GNO balance. Required: {amount}, Available: {self.w3.from_wei(gno_balance, 'ether')}")
                 return None
@@ -95,12 +98,12 @@ class AaveBalancerHandler:
             
             # 1. Approve waGNO contract to spend GNO
             checksummed_wagno_address = self.w3.to_checksum_address(self.wagno_address)
-            if not self.bot.approve_token(self.sdai_token, checksummed_wagno_address, amount_wei):
+            if not self.bot.approve_token(gno_token, checksummed_wagno_address, amount_wei):
                 print("❌ Failed to approve GNO transfer")
                 return None
             
             # Debug: Get the current allowance
-            current_allowance = self.sdai_token.functions.allowance(self.address, checksummed_wagno_address).call()
+            current_allowance = gno_token.functions.allowance(self.address, checksummed_wagno_address).call()
             print(f"DEBUG: Current allowance for waGNO contract: {self.w3.from_wei(current_allowance, 'ether')} GNO")
             
             # Debug: Check if waGNO contract exists
@@ -246,17 +249,22 @@ class AaveBalancerHandler:
                 print(f"GNO: {self.w3.from_wei(new_gno_balance, 'ether')} ({new_gno_balance} wei)")
                 
                 # Calculate and display changes
-                wagno_change = new_wagno_balance - wagno_balance
                 print(f"\nBalance Changes:")
-                print(f"waGNO: {self.w3.from_wei(wagno_change, 'ether'):+.18f}")
-                print(f"GNO: {self.w3.from_wei(amount_wei, 'ether'):+.18f}")
+                print(f"waGNO: -{amount} waGNO")  # We know exactly how much was unwrapped
+                print(f"GNO: +{amount} GNO")  # We know exactly how much was received
                 
                 return tx_hash.hex()
             else:
                 print("❌ Unwrapping transaction failed!")
-                print(f"Check transaction details at: https://blockscout.com/xdai/mainnet/tx/{tx_hash.hex()}")
+                # Try to get error details
+                try:
+                    trace_node = f"https://blockscout.com/xdai/mainnet/api?module=transaction&action=gettxinfo&txhash={tx_hash.hex()}"
+                    print(f"Check transaction details at: {trace_node}")
+                    print(f"Transaction: https://gnosisscan.io/tx/{tx_hash.hex()}")
+                except Exception as trace_error:
+                    print(f"Error getting transaction trace: {trace_error}")
                 return None
-                
+                    
         except Exception as e:
             print(f"❌ Error unwrapping waGNO to GNO: {e}")
             import traceback

@@ -1,11 +1,18 @@
-from config.constants import (
+"""
+SushiSwap V3 Exchange Handler
+
+This module is currently in EXPERIMENTAL status.
+Please use with caution as functionality may change.
+"""
+
+from futarchy.experimental.config.constants import (
     CONTRACT_ADDRESSES,
     SUSHISWAP_V3_ROUTER_ABI,
     SUSHISWAP_V3_NFPM_ABI,
     UNISWAP_V3_POOL_ABI,
     ERC20_ABI
 )
-from utils.web3_utils import get_raw_transaction
+from futarchy.experimental.utils.web3_utils import get_raw_transaction
 import time
 import math
 

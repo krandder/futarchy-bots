@@ -1,7 +1,14 @@
-from core.futarchy_bot import FutarchyBot
-from strategies.monitoring import simple_monitoring_strategy
-from strategies.probability import probability_threshold_strategy
-from strategies.arbitrage import arbitrage_strategy
+"""
+Interactive CLI menu for the Futarchy Trading Bot
+
+This module is currently in EXPERIMENTAL status.
+Please use with caution as functionality may change.
+"""
+
+from futarchy.experimental.core.futarchy_bot import FutarchyBot
+from futarchy.experimental.strategies.monitoring import simple_monitoring_strategy
+from futarchy.experimental.strategies.probability import probability_threshold_strategy
+from futarchy.experimental.strategies.arbitrage import arbitrage_strategy
 
 class FutarchyMenu:
     """Interactive CLI menu for the Futarchy Trading Bot"""

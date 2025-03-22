@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
 Futarchy Trading Bot - Main entry point
+
+This module is currently in EXPERIMENTAL status.
+Please use with caution as functionality may change.
 """
 
 import sys
@@ -11,9 +14,9 @@ import time
 import json
 from web3 import Web3
 from dotenv import load_dotenv
-from exchanges.sushiswap import SushiSwapExchange
-from exchanges.passthrough_router import PassthroughRouter
-from config.constants import (
+from futarchy.experimental.exchanges.sushiswap import SushiSwapExchange
+from futarchy.experimental.exchanges.passthrough_router import PassthroughRouter
+from futarchy.experimental.config.constants import (
     CONTRACT_ADDRESSES,
     TOKEN_CONFIG,
     POOL_CONFIG_YES,
@@ -33,10 +36,10 @@ import math
 # Add the current directory to the path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from core.futarchy_bot import FutarchyBot
-from strategies.monitoring import simple_monitoring_strategy
-from strategies.probability import probability_threshold_strategy
-from strategies.arbitrage import arbitrage_strategy
+from futarchy.experimental.core.futarchy_bot import FutarchyBot
+from futarchy.experimental.strategies.monitoring import simple_monitoring_strategy
+from futarchy.experimental.strategies.probability import probability_threshold_strategy
+from futarchy.experimental.strategies.arbitrage import arbitrage_strategy
 
 def parse_args():
     """Parse command line arguments"""
@@ -78,6 +81,9 @@ def parse_args():
     
     buy_gno_parser = subparsers.add_parser('buy_gno', help='Buy GNO with sDAI (buys waGNO and unwraps it)')
     buy_gno_parser.add_argument('amount', type=float, help='Amount of sDAI to spend')
+    
+    wrap_gno_parser = subparsers.add_parser('wrap_gno', help='Wrap GNO to waGNO')
+    wrap_gno_parser.add_argument('amount', type=float, help='Amount of GNO to wrap')
     
     unwrap_wagno_parser = subparsers.add_parser('unwrap_wagno', help='Unwrap waGNO to GNO')
     unwrap_wagno_parser.add_argument('amount', type=float, help='Amount of waGNO to unwrap')
@@ -213,7 +219,7 @@ def main():
     
     elif args.command == 'buy_wrapped_gno':
         # Buy waGNO with sDAI using Balancer BatchRouter
-        from exchanges.balancer.swap import BalancerSwapHandler
+        from futarchy.experimental.exchanges.balancer.swap import BalancerSwapHandler
         try:
             balancer = BalancerSwapHandler(bot)
             result = balancer.swap_sdai_to_wagno(args.amount)
@@ -229,7 +235,7 @@ def main():
     
     elif args.command == 'buy_gno':
         # Buy waGNO and automatically unwrap it to GNO
-        from exchanges.balancer.swap import BalancerSwapHandler
+        from futarchy.experimental.exchanges.balancer.swap import BalancerSwapHandler
         try:
             print(f"\n🔄 Buying and unwrapping GNO using {args.amount} sDAI...")
             
@@ -275,6 +281,13 @@ def main():
     elif args.command == 'unwrap_wagno':
         # Use the waGNO token contract to unwrap to GNO
         success = bot.aave_balancer.unwrap_wagno(args.amount)
+        if success:
+            balances = bot.get_balances()
+            bot.print_balances(balances)
+    
+    elif args.command == 'wrap_gno':
+        # Use the waGNO token contract to wrap GNO
+        success = bot.aave_balancer.wrap_gno_to_wagno(args.amount)
         if success:
             balances = bot.get_balances()
             bot.print_balances(balances)

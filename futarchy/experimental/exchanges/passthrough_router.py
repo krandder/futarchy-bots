@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+Uniswap V3 Passthrough Router for swapping conditional tokens.
+
+This module is currently in EXPERIMENTAL status.
+Please use with caution as functionality may change.
+"""
 
 import os
 from web3 import Web3
@@ -10,7 +16,7 @@ from dotenv import load_dotenv
 # Load .env file but don't override existing environment variables
 load_dotenv(override=False)
 
-from config.constants import TOKEN_CONFIG, ERC20_ABI
+from futarchy.experimental.config.constants import TOKEN_CONFIG, ERC20_ABI
 
 class PassthroughRouter:
     """

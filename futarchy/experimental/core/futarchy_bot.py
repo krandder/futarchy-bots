@@ -1,22 +1,32 @@
+"""
+Futarchy Trading Bot implementation
+
+This module is currently in EXPERIMENTAL status.
+Please use with caution as functionality may change.
+"""
+
 import time
 import sys
 import os
+from decimal import Decimal
+from typing import Optional, Dict, List, Tuple, Any
+from web3 import Web3
+from eth_typing import ChecksumAddress
 
 # Add the project root to the path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from web3 import Web3
 from config.constants import (
     TOKEN_CONFIG, POOL_CONFIG_YES, POOL_CONFIG_NO, CONTRACT_ADDRESSES,
     UNISWAP_V3_POOL_ABI, SUSHISWAP_V3_ROUTER_ABI, FUTARCHY_ROUTER_ABI,
     SDAI_RATE_PROVIDER_ABI, WXDAI_ABI, SDAI_DEPOSIT_ABI, MIN_SQRT_RATIO, MAX_SQRT_RATIO,
     COWSWAP_API_URL, BALANCER_CONFIG, BALANCER_VAULT_ABI, BALANCER_BATCH_ROUTER_ABI
 )
-from utils.web3_utils import get_raw_transaction
-from exchanges.cowswap import CowSwapExchange
-from core.base_bot import BaseBot
-from exchanges.aave_balancer import AaveBalancerHandler
-from exchanges.sushiswap import SushiSwapExchange
+from futarchy.experimental.utils.web3_utils import get_raw_transaction
+from futarchy.experimental.exchanges.cowswap import CowSwapExchange
+from futarchy.experimental.core.base_bot import BaseBot
+from futarchy.experimental.exchanges.aave_balancer import AaveBalancerHandler
+from futarchy.experimental.exchanges.sushiswap import SushiSwapExchange
 
 class FutarchyBot(BaseBot):
     """Main Futarchy Trading Bot implementation"""
